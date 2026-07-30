@@ -109,6 +109,11 @@ extern "C" {
   //e.g: GD&DDT,QDDND...
   //The engine will return to normal mode when a word-break occurs.
   void UnikeySetSingleMode();
+
+  // True when the engine's buffer is empty or sits right after a word break.
+  // Preedit-based front-ends use this to decide when a syllable is finished
+  // and the accumulated preedit can be committed.
+  int UnikeyAtWordBeginning();
 #if defined(__cplusplus)
 }
 #endif

@@ -165,6 +165,12 @@ void UnikeySetSingleMode()
 }
 
 //--------------------------------------------
+int UnikeyAtWordBeginning()
+{
+  return MyKbEngine.atWordBeginning() ? 1 : 0;
+}
+
+//--------------------------------------------
 void UnikeyBackspacePress()
 {
   UnikeyBufChars = sizeof(UnikeyBuf);

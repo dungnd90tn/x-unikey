@@ -1,0 +1,81 @@
+# Chi commit ma nguon. Tat ca file duoi day deu sinh lai duoc bang:
+#     ./autogen.sh && ./configure && make
+
+#---------------------------------------------------------------
+# autotools sinh ra (autoreconf -i tao lai het)
+#---------------------------------------------------------------
+/configure
+/aclocal.m4
+/autom4te.cache/
+/config.h.in
+/config.h.in~
+/libtool
+/ltmain.sh
+/m4/
+Makefile.in
+
+# script phu do "autoreconf -i" chep vao
+/compile
+/config.guess
+/config.sub
+/depcomp
+/install-sh
+/missing
+/mkinstalldirs
+/test-driver
+/ylwrap
+
+#---------------------------------------------------------------
+# configure sinh ra
+#---------------------------------------------------------------
+/config.h
+/config.log
+/config.status
+/stamp-h1
+Makefile
+
+#---------------------------------------------------------------
+# ket qua bien dich
+#---------------------------------------------------------------
+*.o
+*.lo
+*.la
+*.a
+*.so
+*.so.*
+.libs/
+.deps/
+*.gcda
+*.gcno
+
+# chuong trinh
+/src/xim/ukxim
+/src/gui/unikey
+/src/unikey-ibus/ibus-engine-unikey
+
+# file sinh ra luc build
+/src/unikey-ibus/unikey.xml
+/src/unikey-qt/main.moc
+/src/unikey-qt/moc_*.cpp
+
+# test
+/src/ukbridge/test-bridge
+/src/unikey-qt/test-plugin
+*.log
+*.trs
+!/doc/*.log
+
+#---------------------------------------------------------------
+# dong goi
+#---------------------------------------------------------------
+/release/
+*.deb
+*.tar.gz
+*.tar.bz2
+
+#---------------------------------------------------------------
+# linh tinh
+#---------------------------------------------------------------
+*~
+*.swp
+.DS_Store

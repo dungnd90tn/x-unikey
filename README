@@ -1,12 +1,229 @@
-Unikey Input Method for X-Window
+Unikey Input Method for X-Window / Wayland
 Copyright (C) 2004 Pham Kim Long
-================================
+==========================================
 
-This package contains following components:
-- ukxim: Unikey XIM (X Input Method) server
-- unikey: GUI for ukxim and unikey-gtk
-- unikey-gtk: GTK vietnamese input method module
+Bo go tieng Viet UniKey. Ban goc 1.0.4 (2006) chi co XIM server cho X11;
+ban nay bo sung cac front-end hien dai de chay duoc tren desktop Wayland
+ma khong can ibus-unikey hay fcitx5-unikey.
 
-To install: see INSTALL
-Manual: see doc/manual
+Thanh phan
+----------
 
+  Front-end hien dai (moi):
+    ibus-engine-unikey       IBus engine. Hien trong Settings -> Keyboard
+                             -> Input Sources. Cach dung duoc khuyen nghi.
+    im-unikey.so             Module GTK3
+    libim-unikey.so          Module GTK4
+    libunikeyplatform...so   Plugin Qt5/Qt6
+
+  Dung chung:
+    ukbridge                 Toan bo logic go tieng Viet cua cac
+                             front-end moi
+
+Kien truc va ly do thiet ke:   doc/STANDALONE.md
+
+
+1. Yeu cau
+----------
+
+Bat buoc:
+    build-essential pkg-config
+
+Tuy front-end muon build (configure tu bo qua cai nao thieu thu vien):
+    ibus libibus-1.0-dev                 IBus engine  <- can cai neu muon
+                                                         hien trong Settings
+    libgtk-3-dev                         module GTK3
+    libgtk-4-dev                         module GTK4
+    qt6-base-dev qt6-base-private-dev    plugin Qt6
+
+Cai het tren Ubuntu/Debian:
+
+    sudo apt install build-essential pkg-config \
+        ibus libibus-1.0-dev \
+        libgtk-3-dev libgtk-4-dev \
+        qt6-base-dev qt6-base-private-dev
+
+Luu y: plugin Qt CAN qt6-base-private-dev, vi QPlatformInputContext la API
+private cua Qt. Thieu goi nay thi configure bo qua plugin Qt.
+
+
+2. Build
+--------
+
+    ./configure
+    make
+    make check
+
+Tren trinh bien dich moi (gcc >= 14) can them co, vi vai cach viet trong ma
+nguon 2006 nay da thanh loi:
+
+    ./configure CFLAGS="-O2 -std=gnu17" \
+                CXXFLAGS="-O2 -Wno-narrowing -include cstring -include cstdlib"
+    make
+
+  -std=gnu17         gcc mac dinh C23, bien implicit declaration thanh loi
+  -Wno-narrowing     bang charset trong vnconv nhoi '\xNN' vao mang
+                     unsigned char; cat bit van ra dung, chi la C++11 bao loi
+  -include cstring   vai file goi strchr/strlen ma dua vao transitive include
+  -include cstdlib   khong con nua
+
+Cuoi buoc configure se in ra front-end nao duoc build, vi du:
+
+    checking for ibus-1.0 >= 1.5... yes
+    checking for gtk+-3.0 >= 3.22... yes
+    checking for gtk4 >= 4.6... yes
+    checking for Qt6Gui >= 6.2... yes
+
+Neu sua Makefile.am hay configure.ac thi phai chay lai:
+
+    autoreconf -i
+
+`make check` chay hai bo test, khong can man hinh:
+    src/ukbridge/test-bridge     logic go tieng Viet (Telex/VNI/VIQR,
+                                 backspace, trang thai dung chung)
+    src/unikey-qt/test-plugin    plugin Qt nap duoc va tao input context
+
+
+3. Cai dat
+----------
+
+Co hai cach. CHI DUNG MOT, dung ca hai se de lai file mo coi.
+
+3.a Goi .deb (khuyen nghi)
+
+    ./make-deb.sh
+    sudo dpkg -i release/x-unikey_*.deb
+
+    Cai vao /usr, do dpkg quan ly, go sach bang:
+        sudo apt remove x-unikey
+
+3.b Cai bang tay
+
+    sudo ./install-standalone.sh          # go: sudo ./install-standalone.sh remove
+
+    Cai vao /usr/local, khong qua dpkg. Tien khi dang phat trien.
+
+CHUYEN TU 3.b SANG 3.a: phai go ban cai tay TRUOC, vi hai ben dung chung
+duong dan cho module GTK/Qt nhung khac duong dan cho engine -- cai .deb de
+len se bo lai /usr/local/libexec/ibus-engine-unikey mo coi:
+
+    sudo ./install-standalone.sh remove
+    sudo dpkg -i release/x-unikey_*.deb
+    ibus restart
+
+
+4. Dung: qua Settings (khuyen nghi)
+-----------------------------------
+
+    1. Dang xuat roi dang nhap lai.
+
+       BUOC NAY BAT BUOC neu ban vua cai ibus lan dau. gnome-shell chi do
+       va khoi dong ibus MOT LAN luc phien bat dau; chay `ibus-daemon` bang
+       tay khong thay the duoc. Trieu chung khi bo qua buoc nay:
+       `ibus list-engine` liet ke duoc "unikey" nhung Settings khong thay gi.
+
+    2. Settings -> Keyboard -> Input Sources -> + -> Vietnamese
+       -> "Vietnamese (UniKey)"
+
+    3. Chuyen bo go bang Super-Space.
+
+Cach nay khong can bien moi truong nao, co chi bao tren thanh tren cung, va
+go duoc vao ca VSCode / ung dung Electron / ung dung GTK4 Wayland -- nhung
+app ma module toolkit khong voi toi duoc (xem doc/STANDALONE.md muc 6).
+
+
+5. Dung: module toolkit (khi khong co ibus)
+-------------------------------------------
+
+Dat cac bien sau (install-standalone.sh da ghi san vao
+~/.config/environment.d/unikey.conf) roi dang nhap lai:
+
+    GTK_IM_MODULE=unikey
+    QT_IM_MODULE=unikey
+    XMODIFIERS=@im=unikey
+
+Thu ngay khong can dang xuat:
+
+    GTK_IM_MODULE=unikey gedit                 # GTK3
+    GTK_IM_MODULE=unikey gnome-text-editor     # GTK4
+
+
+6. Hai che do go
+----------------
+
+DIRECT
+    Commit thang tung ky tu, sua dau bang delete-surrounding-text.
+    Giong UniKey tren Windows: khong gach chan, khong co trang thai
+    "dang go do".
+
+PREEDIT
+    Am tiet dang go nam trong vung preedit gach chan, chua vao van ban that.
+    Nguoi dung nhin thay "tam", nhung luon dung.
+
+IBus engine TU CHON theo IBUS_CAP_SURROUNDING_TEXT ma ung dung khai bao:
+
+    caps co surrounding   -> DIRECT                  (trinh duyet, o nhap thuong)
+    caps khong co         -> theo TerminalMode       (gnome-terminal)
+
+Do bang log that tren Ubuntu 26.04 / GNOME:
+
+    caps=0x29 surrounding=yes -> DIRECT
+    caps=0x9  surrounding=no  -> PREEDIT
+
+Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
+
+BA CACH DA THU VA THAT BAI, dung lam lai:
+
+  1. DIRECT o moi noi bang delete-surrounding-text, khong hoi caps.
+     VTE (gnome-terminal) lo di lenh xoa -> "xem duocj chuwa naof" ra
+     "xem dđuouọcược chuaưa naoào". Phai ton trong caps.
+
+  2. Thay bang forward_key_event(BackSpace).
+     Phim forward di vao hang doi su kien cua toolkit, con commit_text ap
+     thang vao widget -- khong bao dam thu tu, HONG CA TRINH DUYET.
+     Tac gia ban goc nam 2006 cung da di den ket luan nay: module GTK2 cu
+     (da go bo o ban nay) co chu thich noi ro delete-surrounding cua toolkit
+     "unreliable" nen ho phai gia lap phim BackSpace -- va phim gia thi lai
+     dinh dung van de thu tu o tren.
+
+  3. Nhan dien terminal bang IBUS_INPUT_PURPOSE_TERMINAL.
+     Log cho thay purpose LUON bang 0 (FREE_FORM) ke ca trong gnome-terminal.
+     Tin hieu nay vo dung; chi con dung de nhan ra o mat khau.
+
+Trong che do DIRECT, ky tu thuong cung phai TU COMMIT chu khong tra ve cho
+ung dung tu chen: neu khong, ky tu di duong su kien ban phim con lenh xoa di
+duong input-method, va khi go nhanh se dao thu tu ("đấy" ra "đâdấyd").
+
+TAT HAN GO TIENG VIET TRONG TERMINAL
+
+Mac dinh la tat: lenh shell khong can dau tieng Viet. Doi trong
+~/.unikey/options roi `ibus restart`:
+
+    TerminalMode = Off       # mac dinh: tat han
+    TerminalMode = Preedit   # van go duoc, co gach chan
+
+Go roi: touch ~/.unikey/debug && ibus restart
+        cat ~/.unikey/debug.log        (in caps va che do da chon cho tung o nhap)
+
+
+7. Phim tat
+-----------
+
+    Ctrl-Shift          bat/tat tieng Viet
+    Ctrl-Shift-F5..F8   Telex / VNI / VIQR / kieu tu dinh nghia
+    Ctrl-Shift-Z        tat spell-check cho tu ke tiep (go tat: HDDQT, BDD)
+    Ctrl-Shift-Esc      tra lai phim da go
+
+Khi dung qua ibus, Super-Space cua GNOME va Ctrl-Shift la hai cong tac doc
+lap: Ctrl-Shift tat tieng Viet ben trong engine nhung chi bao tren thanh
+tren cung van hien VN.
+
+    Cau hinh:             ~/.unikey/options
+    Trang thai bat/tat:   ~/.unikey/state    (dong bo giua cac ung dung)
+    Macro, kieu go rieng: xem doc/keymap-syntax, doc/im-samples/, doc/ukmacro
+
+
+8. Giay phep
+------------
+
+GPL / LGPL, xem COPYING.

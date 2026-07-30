@@ -1,7 +1,6 @@
 AM_CPPFLAGS = -Wall -I../vnconv -I../byteio
 
 noinst_LTLIBRARIES = libUnikey.la
-libUnikey_la_LIBADD = ../vnconv/libvnconv.la
 
 libUnikey_la_SOURCES = \
 	ukengine.cpp \

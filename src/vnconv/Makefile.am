@@ -2,7 +2,6 @@ AM_CPPFLAGS = -Wall -I../byteio
 
 noinst_LTLIBRARIES = libvnconv.la
 
-libvnconv_la_LIBADD = ../byteio/libbyteio.la
 libvnconv_la_SOURCES = \
 	charset.cpp \
 	charset.h \

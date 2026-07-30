@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dat file nay o $(datadir)/ibus/component/ thi engine se hien trong
+     GNOME Settings -> Keyboard -> Input Sources -> Vietnamese. -->
+<component>
+    <name>org.freedesktop.IBus.Unikey</name>
+    <description>Vietnamese UniKey input method</description>
+    <exec>@LIBEXECDIR@/ibus-engine-unikey --ibus</exec>
+    <version>@VERSION@</version>
+    <author>UniKey team &lt;unikey@gmail.com&gt;</author>
+    <license>GPL</license>
+    <homepage>https://unikey.org</homepage>
+    <textdomain>x-unikey</textdomain>
+
+    <engines>
+        <engine>
+            <name>unikey</name>
+            <language>vi</language>
+            <license>GPL</license>
+            <author>UniKey team &lt;unikey@gmail.com&gt;</author>
+            <layout>us</layout>
+            <longname>Vietnamese (UniKey)</longname>
+            <description>Bo go tieng Viet UniKey: Telex, VNI, VIQR</description>
+            <rank>99</rank>
+            <symbol>VN</symbol>
+        </engine>
+    </engines>
+</component>

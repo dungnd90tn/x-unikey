@@ -4,202 +4,171 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-x-unikey 1.0.4 (2006) — the Vietnamese UniKey input method for X11, by Pham Kim Long. GNU
-autotools, C++ engine + C X11 front-ends. It ships three deliverables:
+UniKey Vietnamese input method. Started life as x-unikey 1.0.4 (2006), an XIM server for X11; the
+XIM/GTK2 layers have been removed and it is now a set of modern input-method front-ends sharing the
+original typing engine.
 
 | Target | Built from | Kind |
 |---|---|---|
-| `ukxim` | [src/xim/](src/xim/) | XIM server (the actual input method) |
-| `unikey` | [src/gui/](src/gui/) | Floating status window; also forks/supervises `ukxim` |
-| `im-vn.la` | [src/unikey-gtk/](src/unikey-gtk/) | GTK2 `immodule` (optional, off by default) |
+| `ibus-engine-unikey` | [src/unikey-ibus/](src/unikey-ibus/) | IBus engine — the primary front-end |
+| `im-unikey.so` | [src/unikey-gtk3/](src/unikey-gtk3/) | GTK3 immodule |
+| `libim-unikey.so` | [src/unikey-gtk4/](src/unikey-gtk4/) | GTK4 immodule |
+| `libunikeyplatforminputcontextplugin.so` | [src/unikey-qt/](src/unikey-qt/) | Qt6 platform input context plugin |
+| `libukbridge.la` | [src/ukbridge/](src/ukbridge/) | Toolkit-independent layer every front-end shares |
 
-This is a CVS-era release tarball, not a git checkout (`doc/CVS/`, `src/IMdkit/doc/CVS/` are
-leftovers). The generated autotools output (`configure`, `Makefile.in`, `aclocal.m4`) is checked
-in — edit `configure.ac` / `Makefile.am` and re-run `autoreconf -i` only if you must; the shipped
-`configure` works as-is.
+Design rationale and the measurements behind it: [doc/STANDALONE.md](doc/STANDALONE.md).
+User-facing build/install/usage: [README](README).
+
+## Architecture
+
+```
+byteio → vnconv → ukengine → ukinterface (C API)   ← unchanged 2006 engine
+                                  ↑
+                              ukbridge                ← the layer to understand
+                    ┌─────────┬────┴────┬──────────┐
+                  ibus      GTK3      GTK4        Qt6
+```
+
+The engine's contract is *"delete N characters, then insert these bytes"*. `ukbridge` turns that
+into either a **preedit string** or **direct commits**, and owns everything else the front-ends
+would otherwise duplicate: the shortcut table ([ukkeys.c](src/ukbridge/ukkeys.c), keyed on X11
+keysyms — `GDK_KEY_*` and `IBUS_KEY_*` are the same numbers), config parsing
+([ukopt.c](src/ukbridge/ukopt.c)), and cross-process state. A front-end should only translate its
+toolkit's event type and render the result. If you find yourself writing typing logic in a
+front-end, it belongs in `ukbridge`.
+
+`ukinterface` holds one process-global `UkEngine`; `uk_bridge_reset()` on focus-in keeps contexts
+from bleeding into each other. `UkSharedMem` ([ukengine.h](src/ukengine/ukengine.h)) is
+deliberately pointer-free because the Windows build puts it in shared memory — don't add pointers.
+
+Input methods are *tables* (`UkKeyMapping[]` in [inputproc.h](src/ukengine/inputproc.h)), and
+options are a table too (`OptItem[]` with struct byte offsets), so adding either is a mechanical
+edit, not new code.
+
+### DIRECT vs PREEDIT — read this before touching the commit path
+
+The IBus engine picks per input context from the `IBUS_CAP_SURROUNDING_TEXT` bit the *application*
+advertises (`uk_ibus_engine_set_capabilities` in [src/unikey-ibus/engine.c](src/unikey-ibus/engine.c)):
+
+- **with** the bit → DIRECT: commit straight, fix diacritics via `delete-surrounding-text`, no underline.
+- **without** it → whatever `TerminalMode` in `~/.unikey/options` says: `Off` (default, input
+  disabled) or `Preedit`.
+
+Measured on Ubuntu 26.04/GNOME: `caps=0x29 surrounding=yes` in browsers, `caps=0x9 surrounding=no`
+in gnome-terminal. **The flag is honest — trust it.** GTK/Qt modules never set
+`erase_before_cursor`, so they are always PREEDIT.
+
+Three approaches were tried and failed. Do not reintroduce them:
+
+1. **DIRECT everywhere, ignoring caps.** VTE (gnome-terminal) drops the delete silently, producing
+   `xem dđuouọcược chuaưa naoào` for `xem được chưa nào` — old characters survive and each
+   correction is appended. Browsers honour it, so it presents as "only the terminal is broken".
+2. **`forward_key_event(BackSpace)` instead of delete-surrounding.** Forwarded keys go through the
+   toolkit's event queue while `commit_text` is applied directly to the widget; nothing orders the
+   two, and this **breaks browsers as well**.
+3. **Detecting terminals via `IBUS_INPUT_PURPOSE_TERMINAL`.** `purpose` is always `0` (FREE_FORM),
+   even in gnome-terminal. Useless here; it survives only as a password-field check.
+
+Two related invariants, both easy to break:
+
+- In DIRECT mode a pass-through character must be **committed by the bridge**, not returned as
+  `UK_BRIDGE_PASS`. Letting the application insert it puts the character on the key-event path
+  while the erase goes on the input-method path; fast typing reorders them (`đấy` → `đâdấyd`).
+- `uk_bridge_backspace` must **never swallow BackSpace** in DIRECT mode. Where the erase is
+  ignored, swallowing it means the key does nothing until the engine buffer drains — it feels like
+  "you have to hold backspace for a while".
+
+**Diagnose, don't guess:** `touch ~/.unikey/debug && ibus restart` makes the engine log each
+context's caps and chosen mode to `~/.unikey/debug.log`. An env var is no use — ibus-daemon spawns
+the engine. Every wrong turn above came from reasoning about this without measuring it.
+
+### Cross-process state
+
+Enable/disable and input method live in `~/.unikey/state`, written atomically via `rename()` and
+watched with inotify, so a toggle in one app reaches the others without a daemon. Two things that
+bit us, both now covered by tests: watch the **directory** (rename swaps the inode, so a watch on
+the file dies after the first write), and do **not** filter self-triggered events (a "we're
+writing" flag got stuck and swallowed a real change from another process; re-reading your own state
+is already a no-op).
 
 ## Build
 
 ```sh
-./configure                        # ukxim + unikey
-./configure --with-unikey-gtk      # also build the GTK2 im module
-make
+./autogen.sh          # only after a fresh clone — generated files are gitignored
+./configure CFLAGS="-O2 -std=gnu17" \
+            CXXFLAGS="-O2 -Wno-narrowing -include cstring -include cstdlib"
+make && make check
 ```
 
-Other `configure` knobs: `--with-gtk-sysconfdir=PATH` (default `/etc/gtk-2.0`), `--with-libdir=PATH`
-(where `im-vn.so` lands; default is gtk+-2.0's `libdir`).
+The extra flags are needed because gcc ≥ 14 rejects pre-C++11 idioms in the 2006 engine:
+`-std=gnu17` (C23 makes implicit declarations errors), `-Wno-narrowing` (vnconv's charset tables
+put `'\xNN'` literals in `unsigned char` arrays; the truncation is bit-identical), and the two
+`-include`s (files call `strchr`/`strlen` relying on transitive includes that no longer happen).
+One source fix was applied for the same reason:
+[src/ukengine/mactab.cpp](src/ukengine/mactab.cpp):289.
 
-There is **no test suite** — `make check` just recurses and does nothing. Verification means
-compiling and running `ukxim`/`unikey` against a real X server.
+`configure` skips any front-end whose libraries are missing, so check its output to see what will
+actually be built. **After editing any `Makefile.am` or `configure.ac`, run `autoreconf -i`.**
 
-### Modern-toolchain reality (verified on gcc 15)
+Three build-system traps, all previously hit:
 
-`./configure` succeeds, but `make` does not. Two classes of breakage, both pre-C++11 idioms:
+- **`PKG_PROG_PKG_CONFIG` must be called unconditionally** before any `PKG_CHECK_MODULES`. Every
+  such check here sits inside an `if`, so autoconf otherwise buries the `$PKG_CONFIG` assignment in
+  the first one — leaving it empty and making *every* later pkg-config check report "not found".
+- **Convenience libraries must not `_LIBADD` each other.** `ukengine/stdafx.cpp` and
+  `vnconv/stdafx.cpp` both produce `stdafx.o`; nesting them merges two same-named members into one
+  archive, which libtool ≥ 2.5 rejects ("object name conflicts in archive"). Every final target
+  lists all four convenience libs explicitly.
+- **Deleting a source directory leaves stale `.deps/*.Plo`** referring to the old paths, and `make
+  clean` does not remove them. `find . -name .deps -type d -exec rm -rf {} +` then re-run
+  `config.status`.
 
-- `src/vnconv/data.cpp:243` — hundreds of `narrowing conversion of '\377…' from 'char' to
-  'unsigned char'` errors in the charset tables.
-- `src/ukengine/usrkeymap.cpp` and friends — `strchr`/`strlen`/`strcmp` used without
-  `<cstring>`/`<cstdlib>`, which older headers pulled in transitively.
+## Tests
 
-To get the pure engine libraries compiling without touching sources:
+`make check` runs two binaries — the only tests in the tree:
 
-```sh
-make CXXFLAGS="-g -O2 -w -fpermissive -include cstring -include cstdlib" \
-     CFLAGS="-g -O2 -w -fpermissive -include string.h -include stdlib.h -include unistd.h"
-```
+- [src/ukbridge/test-bridge.c](src/ukbridge/test-bridge.c): drives `ukbridge` with key sequences
+  and asserts the resulting text, in both PREEDIT and DIRECT modes, plus mid-session mode switches
+  and two-process state sync. It points `$HOME` at a `mkdtemp` directory, so it never touches the
+  developer's real `~/.unikey`. Regression cases are kept verbatim from real bug reports —
+  `xem ddwowcj chuwa naof → xem được chưa nào` is the terminal corruption above.
+- [src/unikey-qt/test-plugin.cpp](src/unikey-qt/test-plugin.cpp): does what Qt does at startup —
+  read plugin metadata, check the `unikey` key and factory IID, load with `QPluginLoader`, call
+  `create()`. Written because no Qt application is installed to type into.
 
-That builds `libbyteio`, `libvnconv`, `libUnikey`, `libukint`. Everything past that needs X11 and
-(for the GTK module) gtk+-2.0 development packages, neither of which is installed on this machine
-(`/usr/include/X11/Xlib.h` absent, `pkg-config --exists x11` fails). Prefer these flags over
-"fixing" the warnings unless the task is explicitly a modernization pass — see *Windows-shared
-code* below.
+The GTK and IBus front-ends have no automated test; verify them by launching a real app and
+confirming the `.so` is mapped via `/proc/<pid>/maps`, or by reading the debug log above.
 
-### Do not run `make install` casually
+## Packaging
 
-Both install hooks mutate system state outside `$prefix`:
+`./make-deb.sh` produces `release/`. It installs under `/usr` (dpkg's territory), regenerates the
+IBus component XML so `<exec>` matches, and derives `Depends:` from the built binaries with
+`dpkg-shlibdeps` rather than a hand-written list. `install-standalone.sh` is the non-dpkg
+alternative and installs under `/usr/local` — **the two must not be mixed**, they share the
+GTK/Qt module paths but not the engine path.
 
-- [src/xim/Makefile.am](src/xim/Makefile.am) `install-data-hook` runs [src/xim/install.sh](src/xim/install.sh),
-  which **interactively rewrites `/etc/profile`** (via `install.sed`/`uninstall.sed`) to export
-  `LANG`, `GTK_IM_MODULE=xim`, `XMODIFIERS=@im=unikey`.
-- [src/unikey-gtk/Makefile.am](src/unikey-gtk/Makefile.am) `install-data-hook` overwrites
-  `$(gtk_sysconfdir)/gtk.immodules` with fresh `gtk-query-immodules-2.0` output.
+The IBus component XML must land in ibus's own datadir
+(`pkg-config ibus-1.0 --variable=datadir`), not `$prefix/share`. Installing it to
+`/usr/local/share/ibus/component` fails silently: ibus never scans there, so the engine simply
+doesn't appear in Settings.
 
-## Architecture
+## Environment facts worth keeping
 
-### Library stack (strictly bottom-up, each a `noinst_LTLIBRARIES` convenience lib)
-
-```
-byteio      low-level byte/char stream I/O + file preamble (BOM) sniffing
-  ↑
-vnconv      Vietnamese charset conversion: CONV_CHARSET_* ↔ CONV_CHARSET_*
-  ↑
-ukengine    the typing engine (UkEngine, UkInputProcessor, CMacroTable)
-  ↑
-ukinterface plain-C façade over the C++ engine  →  linked into every front-end
-```
-
-[src/ukinterface/unikey.cpp](src/ukinterface/unikey.cpp) holds **one process-global engine**
-(`MyKbEngine`) plus one `UkSharedMem *pShMem`, exposed through the `extern "C"` API in
-[src/ukinterface/unikey.h](src/ukinterface/unikey.h). Front-ends never touch `UkEngine` directly;
-they call `UnikeySetup` / `UnikeySetCapsState` / `UnikeyFilter` / `UnikeyBackspacePress` /
-`UnikeyResetBuf` and then read the globals `UnikeyBackspaces`, `UnikeyBufChars`, `UnikeyBuf`,
-`UnikeyOutput`. The header's leading comment block documents the required call order — follow it.
-
-The engine's contract is *"send N backspaces, then these bytes"*: it never sees the text field, so
-every front-end must synthesize backspaces before committing. `UnikeyFilter` must not be called for
-Enter/Tab/arrows/Delete — use `UnikeyResetBuf` for those, `UnikeyBackspacePress` for Backspace.
-
-### The engine
-
-[src/ukengine/](src/ukengine/) is table-driven, in two layers:
-
-1. `UkInputProcessor` ([inputproc.h](src/ukengine/inputproc.h)) maps a raw keycode to a
-   `UkKeyEvent` (`vneTone1`, `vneRoof_a`, `vneHook_uo`, `vneDd`, `vneMapChar`, …) using a 256-entry
-   `m_keyMap`. The built-in methods are just static `UkKeyMapping[]` arrays
-   (`TelexMethodMapping`, `VniMethodMapping`, `VIQRMethodMapping`, …); a user-defined method is the
-   same array loaded from a text file by [usrkeymap.cpp](src/ukengine/usrkeymap.cpp).
-   **Adding an input method = adding a table, not adding code.**
-2. `UkEngine::process()` ([ukengine.cpp](src/ukengine/ukengine.cpp):1732) dispatches the event to a
-   `processTone`/`processRoof`/`processHook`/`processDd`/… member and maintains
-   `WordInfo m_buffer[]` — a per-syllable model (`vnw_cvc` and friends, with `c1Offset/vOffset/c2Offset`,
-   `VowelSeq`/`ConSeq`) that drives Vietnamese spell-checking. Spell-check is what lets 1.0+ leave
-   `linux`/`changes` alone instead of requiring `linuxx`; it is also why abbreviations like `HDDQT`
-   need `setSingleMode()` (CTRL-SHIFT-Z) first. `m_keyStrokes[]` keeps raw keys so
-   `restoreKeyStrokes()` (CTRL-SHIFT-ESC) and auto-restore can undo processing.
-
-`UkSharedMem` ([ukengine.h](src/ukengine/ukengine.h)) is deliberately pointer-free — it is placed in
-shared memory in the Windows build. Do not add pointers or non-POD members to it.
-
-### Front-ends and how they talk to each other
-
-There is no socket or D-Bus. **All state lives in properties on the X root window** and every actor
-reacts to `PropertyNotify`:
-
-- Atom names in [src/gui/xvnkb.h](src/gui/xvnkb.h): `UK_CHARSET`, `UK_METHOD`, `UK_USING`,
-  `UK_GUI_X_POSITION`, `UK_GUI_Y_POSITION`, `UK_GUI_VISIBLE`. The parallel `VK_*` names are xvnkb's;
-  `ukxim -xvnkb-sync` binds to those instead so xvnkb's GUI can drive UniKey's engine
-  (xvnkb's own core must then be disabled).
-- Property *values* use xvnkb's enums (`vk_charsets`/`vk_methods`, e.g. `VKC_UTF8`, `VKM_TELEX`,
-  `VKM_OFF`), which are **not** vnconv's `CONV_CHARSET_*` nor the engine's `UkInputMethod`.
-  Translation lives in `uksync.c`.
-- Consequence for control flow: a shortcut handler in `ukxim` does *not* flip its own state — it
-  calls `UkSetPropValue(...)` and the change comes back through `handlePropertyChanged()`. Preserve
-  that indirection; it is what keeps GUI, XIM server and GTK module consistent.
-- `unikey` (GUI) `fork`/`execvp`s `ukxim` ([src/gui/gui.c](src/gui/gui.c):764), which reports launch
-  success/failure back with `SIGUSR1`/`SIGUSR2` to its parent. `SIGUSR1` sent to `ukxim` means
-  *reload config* (`kill -s USR1 $(pidof ukxim)`, or CTRL-SHIFT + left-click the GUI).
-- Both `ukxim` and `unikey` enforce single-instance by owning an atom (`singleLaunch()`).
-
-**`uksync.c` exists in three copies** — [src/xim/uksync.c](src/xim/uksync.c),
-[src/gui/uksync.c](src/gui/uksync.c), [src/unikey-gtk/uksync.c](src/unikey-gtk/uksync.c) — and they
-have intentionally diverged: the GUI version maps its own `UNIKEY_*` display enums instead of
-`CONV_CHARSET_*`, and the GTK version *owns* `display`/`RootWindow` (plus `UkInitSync()`) where the
-others `extern` them. A change to charset/method mapping must be mirrored into all three by hand.
-Several other files are shared by being compiled from a sibling directory
-(`../xim/optparse.c`, `../xim/ukopt.c`, `../gui/xvnkb.h` appear in other modules' `_SOURCES`).
-
-`ukxim` is built on IMdkit ([src/IMdkit/](src/IMdkit/)) — Hidetoshi Tajima's XIM server toolkit,
-vendored verbatim from the Sun/HP sample. Treat it as a third-party library; the UniKey code is the
-`My*Handler` callbacks in [src/xim/xim.c](src/xim/xim.c) and the IC list in
-[src/xim/IC.c](src/xim/IC.c). Two option-controlled quirks in that layer are the usual cause of
-"app X doesn't work": `CommitMethod` (`XSendEvent` vs XIM forward-event) and `XimFlow`
-(`Static` vs `Dynamic`, needed by rxvt-unicode). Both require fully restarting `unikey`, not a
-config reload.
-
-The GTK module ([src/unikey-gtk/gtkimcontextvn.c](src/unikey-gtk/gtkimcontextvn.c)) is a
-`GtkIMContext` subclass wired into the same engine via `filter_keypress`; it stays passive unless the
-`unikey` GUI is running, unless `GtkImAlone = Yes`.
-
-### Configuration
-
-Runtime config is `~/.unikey/options` (`~/.unikeyrc` was the pre-1.0 location; `doc/unikeyrc` is the
-stale sample, `doc/options` is current). Parsing is generic and table-driven:
-
-- [src/xim/optparse.c](src/xim/optparse.c) walks an `OptItem[]` of `{name, comment, offset, type, lookup}`
-  where `offset` is a byte offset into the options struct and `type` is `LongOpt`/`BoolOpt`/`StrOpt`/`LookupOpt`.
-  It both reads and writes the file (comments are regenerated from the table on save when
-  `AutoSave = Yes`).
-- [src/xim/ukopt.c](src/xim/ukopt.c) is that table for `UkXimOpt` ([ukopt.h](src/xim/ukopt.h));
-  [src/gui/guiopt.c](src/gui/guiopt.c) is a much smaller one for the GUI's window position.
-
-So **adding an option means three edits**: a field in `UkXimOpt`, a comment string, and an `OptItem`
-entry (with `OptMap` lookup table if it's an enum). Nothing else needs to know.
-
-Sample user data files live in [doc/](doc/): `im-samples/` (telex-pro, vni-new, microsoft, … for
-`UsrKeyMapFile`; syntax in `doc/keymap-syntax`), `ukmacro` (macro/auto-text sample).
-
-Macro-file encoding is version-detected in [src/ukengine/mactab.cpp](src/ukengine/mactab.cpp): a
-leading `version=1` marker line means UTF-8 (the 1.0.4 format); a file without it is parsed as VIQR
-and converted on load. `doc/manual` §4.5 still claims VIQR-only — the ChangeLog entry for 1.0.4 is
-the accurate one.
-
-## Windows-shared code
-
-The engine, `vnconv` and `byteio` are shared verbatim with the Windows UniKey build (see the 1.0.3b
-ChangeLog entry, "unified with Win-Unikey"). Hence `#if defined(WIN32)` blocks, the
-`DllInterface`/`DllExport` macros, `stdafx.h`/`stdafx.cpp` precompiled-header stubs, `UnikeySysInfo`,
-and the shared-memory-safe `UkSharedMem`. Keep these; deleting them as dead code diverges the
-port.
-
-Related: `dummy.cpp` in [src/xim/](src/xim/) and [src/unikey-gtk/](src/unikey-gtk/) contains a single
-unused function whose only purpose is to make libtool link those C targets with `g++` against the C++
-engine. Do not remove them.
+- GNOME Settings → Input Sources accepts only two source types, `xkb` and `ibus` (see
+  `gsettings describe org.gnome.desktop.input-sources sources`). A toolkit module can never appear
+  there; that is why the IBus engine exists and why fcitx5 ships its own tray UI.
+- gnome-shell starts ibus **once**, at session start. Installing ibus mid-session and running
+  `ibus-daemon` by hand is not equivalent — `ibus list-engine` will show the engine while Settings
+  shows nothing. Log out and back in.
+- Mutter exposes `zwp_text_input_v3` but not `zwp_input_method_v2`, and routes text-input to its
+  built-in ibus. So on GNOME, Electron/VSCode and GTK4-on-Wayland apps are reachable **only**
+  through the IBus engine — the toolkit modules (and fcitx5) cannot serve them.
 
 ## Conventions
 
-Follow the emacs modeline at the top of each file rather than one house style — the C++ engine files
-declare `tab-width:4; c-basic-offset:4; indent-tabs-mode:nil`, while `src/gui/gui.c` and parts of
-`src/xim/` use 2-space indents with literal tabs. `AM_CPPFLAGS = -Wall` is set per module; cross-module
-includes are done with explicit `-I../ukengine -I../vnconv -I../byteio` rather than a shared include
-dir.
-
-## User-facing controls (useful when reasoning about the key handling code)
-
-Shortcuts are the `ShortcutList[]`/`Trigger_Keys[]` tables in [src/xim/xim.c](src/xim/xim.c):
-CTRL-SHIFT or CTRL-SHIFT-F9 toggles Vietnamese; CTRL-SHIFT-F1..F4 pick charset
-(Unicode/VIQR/TCVN/VNI); F5..F8 pick input method (Telex/VNI/VIQR/user-defined); CTRL-SHIFT-ESC
-restores raw keystrokes; CTRL-SHIFT-Z disables spell-check for the next word. On the GUI window:
-left-click toggles, right-click rotates charset, CTRL-right-click rotates method,
-CTRL-ALT-left-click hides the window and disables the server *without* unloading the processes
-(deliberate — killing `ukxim` can crash clients that hold an XIM connection). Full details in
-[doc/manual](doc/manual).
+Follow the emacs modeline at the top of each file rather than one house style — the C++ engine uses
+4-space indents with no tabs; some older C files use 2-space with literal tabs. `dummy.cpp` in each
+front-end directory exists solely to make libtool link with `g++` against the C++ engine; don't
+remove them. The engine, `vnconv` and `byteio` are shared verbatim with the Windows UniKey build,
+which is why `#if defined(WIN32)` blocks, `DllInterface` macros and `stdafx.h` stubs are still
+there — keep them.
