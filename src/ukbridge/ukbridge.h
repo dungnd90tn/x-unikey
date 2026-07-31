@@ -25,12 +25,11 @@ typedef struct _UkBridge UkBridge;
    `erase_before_cursor` chi can khi front-end muon dung che do commit truc tiep
    (xem uk_bridge_set_direct_mode). De NULL neu khong ho tro.
 
-   LUU Y QUAN TRONG cho nguoi hien thuc callback nay: dung
-   delete-surrounding-text. Rat nhieu ung dung khai bao co
-   IBUS_CAP_SURROUNDING_TEXT nhung KHONG thuc thi lenh xoa -- VTE (loi cua
-   gnome-terminal) la mot vi du -- va khi do ky tu cu khong bi xoa, chu moi
-   cu noi them vao: "dd" ra "dđ" thay vi "đ". Cach chay o moi noi la gui phim
-   BackSpace that, dung nhu UniKey tren Windows van lam. */
+   LUU Y: chi bat DIRECT sau khi front-end xac nhan client thuc su chap nhan
+   thao tac xoa. IBus phai handshake surrounding-text va loai VTE khoi DIRECT;
+   neu khong dam bao duoc thi dung PREEDIT. Khong tron phim BackSpace gia voi
+   callback commit, vi hai hang doi co the dao thu tu; all-forward neu co phai
+   la mot backend rieng. */
 typedef struct {
     void (*commit)(void *user_data, const char *utf8);
     void (*preedit_changed)(void *user_data, const char *utf8);
@@ -59,30 +58,34 @@ void        uk_bridge_flush(UkBridge *b);   /* commit preedit dang co */
 void        uk_bridge_reset(UkBridge *b);   /* bo preedit, reset engine */
 const char *uk_bridge_preedit(UkBridge *b); /* luon khac NULL */
 
+/* Mac dinh bridge xoa preedit truoc roi moi commit, phu hop voi cac module
+   toolkit cu. Front-end IBus/Wayland phai lam nguoc lai: CommitText ket thuc
+   composition mot cach nguyen tu; neu xoa truoc, Chromium/xterm.js co the tu
+   chot composition cu roi lai nhan them CommitText, thanh lap nguyen tu. */
+void uk_bridge_set_commit_before_preedit_clear(UkBridge *b, int on);
+
 /*----------------------------------------------------------------
   Hai che do lam viec
  ----------------------------------------------------------------
 
-  PREEDIT (mac dinh): am tiet dang go nam trong preedit -- vung chu gach chan
-  do ung dung ve, chua vao van ban that. Chay o moi noi, nhung nguoi dung nhin
-  thay gach chan va co trang thai "dang go do".
+  PREEDIT (mac dinh): am tiet dang go nam trong preedit, chua vao van ban that.
+  Cach trang tri do front-end quyet dinh; IBus terminal hien no nhu chu thuong.
 
   DIRECT: commit thang tung ky tu, sua lai bang cach xoa van ban da commit
   (erase_before_cursor). Giong het UniKey tren Windows: khong gach chan, khong
   trang thai tam.
 
-  DIRECT la mac dinh cho front-end nao cung cap erase_before_cursor. Front-end
-  do phai hien thuc no bang cach GUI PHIM BackSpace THAT, khong dung
-  delete-surrounding-text (xem chu thich o UkBridgeVTable).
+  Front-end chi duoc bat DIRECT sau khi da xac nhan erase_before_cursor thuc su
+  hoat dong. Co callback khong co nghia la client se chap nhan lenh xoa.
 
   Doi che do se chot phan dang go truoc.
 */
 void uk_bridge_set_direct_mode(UkBridge *b, int on);
 int  uk_bridge_get_direct_mode(UkBridge *b);
 
-/* Nguoi dung muon lam gi trong o nhap khong ho tro surrounding text
-   (gnome-terminal): UkTerminalOff hay UkTerminalPreedit -- xem ukopt.h.
-   Doc tu TerminalMode trong ~/.unikey/options, mac dinh la Off. */
+/* Cach xu ly client khai bao input-purpose TERMINAL: UkTerminalOff hay
+   UkTerminalPreedit. Doc tu ~/.unikey/options, mac dinh Off. Client khong khai
+   purpose (vi du terminal VS Code) duoc IBus giu o PREEDIT an toan. */
 int  uk_bridge_get_terminal_mode(UkBridge *b);
 
 int  uk_bridge_get_enabled(UkBridge *b);

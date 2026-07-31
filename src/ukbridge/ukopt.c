@@ -73,10 +73,10 @@ static char AutoRestoreNonVnCmt[] =
 
 static char TerminalModeCmt[] =
 "# TerminalMode: Off|Preedit. Mac dinh: Off\n"
-"# Lam gi trong o nhap khong ho tro surrounding text -- trong thuc te la\n"
-"#   gnome-terminal va cac terminal dung VTE.\n"
-"#   Off     : tat han go tieng Viet o do (lenh shell khong can dau)\n"
-"#   Preedit : van go duoc, nhung am tiet dang go hien gach chan\n";
+"# Cach xu ly client khai bao input-purpose TERMINAL.\n"
+"# Terminal khong khai purpose (nhu VS Code) tu dung Preedit an toan.\n"
+"#   Off     : tat bo go, cho phim di thang\n"
+"#   Preedit : go tieng Viet bang vung soan thao trong suot\n";
 
 static OptMap TerminalModeLookup[] = {
   {"OFF", UkTerminalOff},

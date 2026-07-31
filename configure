@@ -21462,19 +21462,19 @@ fi
 if test "X$unikey_ibus" != "Xno" ; then
 
 pkg_failed=no
-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for ibus-1.0 >= 1.5" >&5
-printf %s "checking for ibus-1.0 >= 1.5... " >&6; }
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for ibus-1.0 >= 1.5.24" >&5
+printf %s "checking for ibus-1.0 >= 1.5.24... " >&6; }
 
 if test -n "$IBUS_CFLAGS"; then
     pkg_cv_IBUS_CFLAGS="$IBUS_CFLAGS"
  elif test -n "$PKG_CONFIG"; then
     if test -n "$PKG_CONFIG" && \
-    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"ibus-1.0 >= 1.5\""; } >&5
-  ($PKG_CONFIG --exists --print-errors "ibus-1.0 >= 1.5") 2>&5
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"ibus-1.0 >= 1.5.24\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "ibus-1.0 >= 1.5.24") 2>&5
   ac_status=$?
   printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
   test $ac_status = 0; }; then
-  pkg_cv_IBUS_CFLAGS=`$PKG_CONFIG --cflags "ibus-1.0 >= 1.5" 2>/dev/null`
+  pkg_cv_IBUS_CFLAGS=`$PKG_CONFIG --cflags "ibus-1.0 >= 1.5.24" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes
 else
   pkg_failed=yes
@@ -21486,12 +21486,12 @@ if test -n "$IBUS_LIBS"; then
     pkg_cv_IBUS_LIBS="$IBUS_LIBS"
  elif test -n "$PKG_CONFIG"; then
     if test -n "$PKG_CONFIG" && \
-    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"ibus-1.0 >= 1.5\""; } >&5
-  ($PKG_CONFIG --exists --print-errors "ibus-1.0 >= 1.5") 2>&5
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"ibus-1.0 >= 1.5.24\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "ibus-1.0 >= 1.5.24") 2>&5
   ac_status=$?
   printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
   test $ac_status = 0; }; then
-  pkg_cv_IBUS_LIBS=`$PKG_CONFIG --libs "ibus-1.0 >= 1.5" 2>/dev/null`
+  pkg_cv_IBUS_LIBS=`$PKG_CONFIG --libs "ibus-1.0 >= 1.5.24" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes
 else
   pkg_failed=yes
@@ -21512,15 +21512,15 @@ else
         _pkg_short_errors_supported=no
 fi
         if test $_pkg_short_errors_supported = yes; then
-                IBUS_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "ibus-1.0 >= 1.5" 2>&1`
+                IBUS_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "ibus-1.0 >= 1.5.24" 2>&1`
         else
-                IBUS_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "ibus-1.0 >= 1.5" 2>&1`
+                IBUS_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "ibus-1.0 >= 1.5.24" 2>&1`
         fi
         # Put the nasty error message in config.log where it belongs
         echo "$IBUS_PKG_ERRORS" >&5
 
         if test "X$unikey_ibus" = "Xyes" ; then
-			as_fn_error $? "--with-ibus was given but ibus-1.0 >= 1.5 was not found" "$LINENO" 5
+			as_fn_error $? "--with-ibus was given but ibus-1.0 >= 1.5.24 was not found" "$LINENO" 5
 		 else
 			unikey_ibus=no
 			{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: ibus-1.0 not found (cai libibus-1.0-dev), IBus engine will not be built" >&5
@@ -21530,7 +21530,7 @@ elif test $pkg_failed = untried; then
         { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
 printf "%s\n" "no" >&6; }
         if test "X$unikey_ibus" = "Xyes" ; then
-			as_fn_error $? "--with-ibus was given but ibus-1.0 >= 1.5 was not found" "$LINENO" 5
+			as_fn_error $? "--with-ibus was given but ibus-1.0 >= 1.5.24 was not found" "$LINENO" 5
 		 else
 			unikey_ibus=no
 			{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: ibus-1.0 not found (cai libibus-1.0-dev), IBus engine will not be built" >&5

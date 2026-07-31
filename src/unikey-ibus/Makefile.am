@@ -11,6 +11,7 @@ ibus_engine_unikey_LDADD  = ../ukbridge/libukbridge.la ../ukinterface/libukint.l
 
 ibus_engine_unikey_SOURCES = \
 	engine.c \
+	ibus-policy.h \
 	dummy.cpp
 
 # ibus quet thu muc nay luc khoi dong de biet co nhung engine nao.
@@ -24,4 +25,4 @@ unikey.xml: $(srcdir)/unikey.xml.in Makefile
 	    $(srcdir)/unikey.xml.in > $@
 
 CLEANFILES = unikey.xml
-EXTRA_DIST = unikey.xml.in
+EXTRA_DIST = unikey.xml.in vte-smoke.py

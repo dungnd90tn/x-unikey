@@ -11,6 +11,7 @@
 
 #include "keycons.h"
 #include "ukbridge.h"
+#include "../unikey-ibus/ibus-policy.h"
 
 /*----------------------------------------------------------------
   Front-end gia: gom commit + preedit lai thanh van ban cuoi cung,
@@ -19,18 +20,22 @@
 typedef struct {
     char committed[512];
     char preedit[256];
+    char events[64];
 } FakeEntry;
 
 static void fake_commit(void *user, const char *utf8)
 {
     FakeEntry *e = (FakeEntry *)user;
     strncat(e->committed, utf8, sizeof(e->committed) - strlen(e->committed) - 1);
+    strncat(e->events, "C", sizeof(e->events) - strlen(e->events) - 1);
 }
 
 static void fake_preedit(void *user, const char *utf8)
 {
     FakeEntry *e = (FakeEntry *)user;
     snprintf(e->preedit, sizeof(e->preedit), "%s", utf8 ? utf8 : "");
+    strncat(e->events, (utf8 && *utf8) ? "P" : "E",
+            sizeof(e->events) - strlen(e->events) - 1);
 }
 
 static const UkBridgeVTable FakeVTable = { fake_commit, fake_preedit };
@@ -138,8 +143,8 @@ static void direct_preedit(void *user, const char *utf8)
     (void)user; (void)utf8;   /* che do DIRECT khong dung preedit */
 }
 
-/* Mo phong dung thu ma engine that lam: gui n phim BackSpace, moi phim xoa
-   mot ky tu o cuoi. */
+/* Mo phong client THUC SU chap nhan delete-surrounding-text. VTE khong lam
+   dieu nay, nen policy IBus ben duoi phai giu VTE khoi che do DIRECT. */
 static void direct_erase(void *user, int nchars)
 {
     field_chop_utf8((FakeField *)user, nchars);
@@ -242,6 +247,119 @@ static void check_mode_switch(void)
 }
 
 /*----------------------------------------------------------------
+  Policy IBus phai uu tien purpose=TERMINAL hon capability SURROUNDING gia
+  ban dau cua IBus GTK. Test nay la regression truc tiep cho loi VTE tao ra
+  "dduoc..."/"dđưoơcợc" vi bo qua lenh xoa.
+ ----------------------------------------------------------------*/
+static void check_ibus_policy_case(const char *name,
+                                   int secret, int terminal,
+                                   int caps_known, int can_surround,
+                                   int fallback_preedit,
+                                   UkIBusMode expect)
+{
+    UkIBusMode got = uk_ibus_policy_choose(secret, terminal, caps_known,
+                                           can_surround, fallback_preedit);
+
+    if (got == expect)
+        printf("  ok   policy %-28s -> %d\n", name, got);
+    else {
+        printf("  FAIL policy %-28s -> %d (mong doi %d)\n",
+               name, got, expect);
+        Failures++;
+    }
+}
+
+static void check_ibus_policy(void)
+{
+    /* VTE: purpose terminal thang caps 0x29 gia, nhung van ton trong option. */
+    check_ibus_policy_case("terminal preedit + caps gia",
+                           0, 1, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
+    check_ibus_policy_case("terminal off + caps gia",
+                           0, 1, 1, 1, 0, UK_IBUS_MODE_OFF);
+    check_ibus_policy_case("terminal off + no surrounding",
+                           0, 1, 1, 0, 0, UK_IBUS_MODE_OFF);
+
+    /* Luc IBus chua tra capability, khong duoc mao hiem commit DIRECT. */
+    check_ibus_policy_case("capability chua biet",
+                           0, 0, 0, 0, 0, UK_IBUS_MODE_PREEDIT);
+
+    /* IBus caps khong chung minh duoc editable buffer. VS Code/xterm.js bao
+       surrounding qua textarea an nhung DIRECT lam hong du lieu PTY. */
+    check_ibus_policy_case("entry co surrounding",
+                           0, 0, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
+
+    /* Client khong khai purpose terminal cung phai dung PREEDIT an toan. */
+    check_ibus_policy_case("legacy fallback preedit",
+                           0, 0, 1, 0, 1, UK_IBUS_MODE_PREEDIT);
+    check_ibus_policy_case("legacy fallback off",
+                           0, 0, 1, 0, 0, UK_IBUS_MODE_PREEDIT);
+
+    /* Bao mat luon co do uu tien cao nhat. */
+    check_ibus_policy_case("password terminal",
+                           1, 1, 1, 1, 1, UK_IBUS_MODE_OFF);
+}
+
+/* IBus Reset co the den khi click/doi caret/huy composition. No phai xoa
+   partial word chu khong commit ngoai y muon. */
+static void check_reset_cancels(void)
+{
+    FakeEntry e;
+    UkBridge *b;
+
+    memset(&e, 0, sizeof(e));
+    b = uk_bridge_new(&FakeVTable, &e);
+    uk_bridge_set_enabled(b, 1);
+    uk_bridge_set_input_method(b, UkTelex);
+    type_ascii(b, "tie");
+    uk_bridge_reset(b);
+
+    if (strcmp(uk_bridge_preedit(b), "") == 0 &&
+        strcmp(e.preedit, "") == 0 && strcmp(e.committed, "") == 0) {
+        printf("  ok   IBus reset huy partial word, khong commit\n");
+    } else {
+        printf("  FAIL reset: bridge=%s frontend=%s commit=%s\n",
+               uk_bridge_preedit(b), e.preedit, e.committed);
+        Failures++;
+    }
+    uk_bridge_free(b);
+}
+
+/* Wayland/Chromium: commit phai den truoc empty-preedit. Neu empty den truoc,
+   xterm.js co the finalize composition cu vao PTY, sau do CommitText chen lai
+   nguyen tu. C/E la commit/empty callback; cac P truoc do la preedit update. */
+static void check_commit_before_clear(void)
+{
+    FakeEntry e;
+    UkBridge *b;
+    size_t i;
+    int order_ok = 1;
+
+    memset(&e, 0, sizeof(e));
+    b = uk_bridge_new(&FakeVTable, &e);
+    uk_bridge_set_enabled(b, 1);
+    uk_bridge_set_input_method(b, UkTelex);
+    uk_bridge_set_commit_before_preedit_clear(b, 1);
+    type_ascii(b, "ok chuwa nhir khoong dduwowcj ");
+
+    for (i = 0; e.events[i]; i++) {
+        if ((e.events[i] == 'C' && e.events[i + 1] != 'E') ||
+            (e.events[i] == 'E' && (i == 0 || e.events[i - 1] != 'C'))) {
+            order_ok = 0;
+            break;
+        }
+    }
+
+    if (strcmp(e.committed, "ok chưa nhỉ không được ") == 0 && order_ok) {
+        printf("  ok   IBus commit truoc clear: khong lap tu trong terminal\n");
+    } else {
+        printf("  FAIL thu tu IBus: events=%s commit=%s preedit=%s\n",
+               e.events, e.committed, e.preedit);
+        Failures++;
+    }
+    uk_bridge_free(b);
+}
+
+/*----------------------------------------------------------------
   Trang thai dung chung: hai UkBridge trong cung mot "phien" dong vai
   hai ung dung khac nhau (vi du gedit va gnome-text-editor).
  ----------------------------------------------------------------*/
@@ -328,8 +446,8 @@ int main(void)
     check_backspace("tieengs", 2, "tiế");
     check_backspace("ddaay",   1, "đâ");
 
-    /* Che do DIRECT (mac dinh cua IBus engine): khong preedit, xoa bang
-       erase_before_cursor. Ket qua phai giong het che do preedit. */
+    /* Che do DIRECT (chi cho client co surrounding that): khong preedit, xoa
+       bang erase_before_cursor. Ket qua phai giong het che do preedit. */
     check_direct(UkTelex, "telex", "tieengs",        "tiếng");
     check_direct(UkTelex, "telex", "vieejt",         "việt");
     check_direct(UkTelex, "telex", "ddaay",          "đây");
@@ -337,16 +455,17 @@ int main(void)
     check_direct(UkTelex, "telex", "linux",          "linux");
     check_direct(UkVni,   "vni",   "tie61ng",        "tiếng");
 
-    /* Ca cau da tung ra sai that: che do DIRECT dung delete-surrounding, ma
-       VTE (gnome-terminal) lo di lenh xoa, nen ky tu cu con nguyen va chu moi
-       noi them vao -- "xem dduocjduocj..." thay vi "xem duoc". Gio DIRECT gui
-       phim BackSpace that. Giu ca cau nay lam moc chong tai pham. */
+    /* DIRECT chi dung cho client da xac nhan delete-surrounding. Giu cac cau
+       nay de bao dam nhanh do van dung sau khi policy loai VTE ra khoi no. */
     check_direct(UkTelex, "telex", "ddwowcj",        "được");
     check_direct(UkTelex, "telex", "chuwa",          "chưa");
     check_direct(UkTelex, "telex", "naof",           "nào");
     check_direct(UkTelex, "telex", "xem ddwowcj chuwa naof", "xem được chưa nào");
 
     check_mode_switch();
+    check_ibus_policy();
+    check_reset_cancels();
+    check_commit_before_clear();
     check_shared_state();
 
     if (Failures == 0)

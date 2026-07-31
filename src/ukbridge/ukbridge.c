@@ -38,6 +38,7 @@ struct _UkBridge {
 
     int            direct_mode;   /* commit thang thay vi dung preedit */
     int            terminal_mode; /* UkTerminalOff | UkTerminalPreedit */
+    int            commit_before_preedit_clear;
 };
 
 static int GlobalInited = 0;
@@ -130,14 +131,10 @@ UkBridge *uk_bridge_new(const UkBridgeVTable *vt, void *user_data)
     b->inputMethod = UkTelex;
     b->inotify_fd = -1;
     b->inotify_wd = -1;
-    /* DIRECT la mac dinh cho front-end nao cung cap erase_before_cursor
-       (hien la IBus engine): go muot giong UniKey tren Windows, khong gach chan.
-       Cac front-end khac (GTK/Qt) khong co callback do nen tu dong dung PREEDIT.
-
-       Front-end chiu trach nhiem TAT dong o nhung o nhap ma co che xoa khong
-       chay -- terminal la truong hop da biet, xem set_content_type trong
-       src/unikey-ibus/engine.c. */
-    b->direct_mode = (vt->erase_before_cursor != 0);
+    /* PREEDIT la mac dinh an toan. DIRECT chi danh cho front-end biet chac
+       erase_before_cursor sua van ban that; capability protocol cua mot
+       textarea an (VS Code/xterm.js) khong phai dam bao do. */
+    b->direct_mode = 0;
     buf_init(&b->preedit);
     buf_init(&b->commit_buf);
     uk_bridge_load_config(b);
@@ -205,8 +202,13 @@ void uk_bridge_flush(UkBridge *b)
     if (b->preedit.len > 0) {
         char *s = strdup(b->preedit.data);
         buf_clear(&b->preedit);
-        emit_preedit(b);          /* xoa preedit TRUOC khi commit */
-        emit_commit(b, s);
+        if (b->commit_before_preedit_clear) {
+            emit_commit(b, s);
+            emit_preedit(b);
+        } else {
+            emit_preedit(b);
+            emit_commit(b, s);
+        }
         free(s);
     }
     UnikeyResetBuf();
@@ -224,6 +226,11 @@ void uk_bridge_reset(UkBridge *b)
 const char *uk_bridge_preedit(UkBridge *b)
 {
     return b->preedit.data;
+}
+
+void uk_bridge_set_commit_before_preedit_clear(UkBridge *b, int on)
+{
+    b->commit_before_preedit_clear = on ? 1 : 0;
 }
 
 /*----------------------------------------------------------------*/

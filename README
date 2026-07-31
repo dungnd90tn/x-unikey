@@ -157,53 +157,63 @@ DIRECT
     "dang go do".
 
 PREEDIT
-    Am tiet dang go nam trong vung preedit gach chan, chua vao van ban that.
-    Nguoi dung nhin thay "tam", nhung luon dung.
+    Am tiet dang go nam trong vung preedit, chua vao van ban that.
+    Trong terminal IBus no khong co gach chan, nhin nhu chu thuong nhung
+    khong can VTE xoa lai van ban da commit.
 
-IBus engine TU CHON theo IBUS_CAP_SURROUNDING_TEXT ma ung dung khai bao:
+IBus engine chon che do theo input purpose cua tung o nhap:
 
-    caps co surrounding   -> DIRECT                  (trinh duyet, o nhap thuong)
-    caps khong co         -> theo TerminalMode       (gnome-terminal)
+    password/PIN          -> OFF
+    purpose=TERMINAL      -> theo TerminalMode       (gnome-terminal/VTE)
+    moi context con lai   -> PREEDIT trong suot       (web, app, VS Code/xterm.js)
 
-Do bang log that tren Ubuntu 26.04 / GNOME:
-
-    caps=0x29 surrounding=yes -> DIRECT
-    caps=0x9  surrounding=no  -> PREEDIT
+`IBUS_CAP_SURROUNDING_TEXT` chi noi rang client co mot buffer protocol, khong
+chung minh buffer do la van ban nguoi dung dang sua. VS Code/xterm.js la phan
+vi du: textarea an cua Chromium bao caps=0x29 va purpose=FREE_FORM, nhung thao
+tac delete/commit tren no duoc xterm.js bien thanh byte gui vao PTY. Vi khong co
+app-id hay purpose de nhan ra terminal nay, IBus khong tu chon DIRECT tu caps.
 
 Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
 
-BA CACH DA THU VA THAT BAI, dung lam lai:
+IBus publish preedit bang `PREEDIT_CLEAR` va la ben duy nhat commit no. Khi het
+tu, CommitText phai di truoc empty-preedit; neu xoa composition truoc, Chromium
+co the tu finalize tu cu vao PTY roi nhan them CommitText, tao `chua chua`.
 
-  1. DIRECT o moi noi bang delete-surrounding-text, khong hoi caps.
-     VTE (gnome-terminal) lo di lenh xoa -> "xem duocj chuwa naof" ra
-     "xem dđuouọcược chuaưa naoào". Phai ton trong caps.
+CAC CACH KHONG AN TOAN, dung lam lai:
 
-  2. Thay bang forward_key_event(BackSpace).
+  1. DIRECT o moi noi bang delete-surrounding-text.
+     VTE co the lo di lenh xoa; VS Code/xterm.js co surrounding-text cua
+     textarea an chu khong phai buffer shell. Ket qua la chu cu khong duoc thay
+     dung cach hoac ca tu bi gui lai. IBus vi vay dung PREEDIT.
+
+  2. Chi thay lenh xoa bang forward_key_event(BackSpace), con chu moi van
+     commit_text.
      Phim forward di vao hang doi su kien cua toolkit, con commit_text ap
      thang vao widget -- khong bao dam thu tu, HONG CA TRINH DUYET.
-     Tac gia ban goc nam 2006 cung da di den ket luan nay: module GTK2 cu
-     (da go bo o ban nay) co chu thich noi ro delete-surrounding cua toolkit
-     "unreliable" nen ho phai gia lap phim BackSpace -- va phim gia thi lai
-     dinh dung van de thu tu o tren.
 
-  3. Nhan dien terminal bang IBUS_INPUT_PURPOSE_TERMINAL.
-     Log cho thay purpose LUON bang 0 (FREE_FORM) ke ca trong gnome-terminal.
-     Tin hieu nay vo dung; chi con dung de nhan ra o mat khau.
+  3. Tin caps=0x29 la mot editable buffer.
+     Day co the la gia tri tam cua IBus GTK, hoac buffer phu cua Chromium.
+     Capability nay khong du de bat DIRECT.
 
 Trong che do DIRECT, ky tu thuong cung phai TU COMMIT chu khong tra ve cho
 ung dung tu chen: neu khong, ky tu di duong su kien ban phim con lenh xoa di
 duong input-method, va khi go nhanh se dao thu tu ("đấy" ra "đâdấyd").
 
-TAT HAN GO TIENG VIET TRONG TERMINAL
+Client khai purpose=TERMINAL thi ton trong `TerminalMode`:
 
-Mac dinh la tat: lenh shell khong can dau tieng Viet. Doi trong
-~/.unikey/options roi `ibus restart`:
+    TerminalMode = Off       # mac dinh: tat bo go trong terminal
+    TerminalMode = Preedit   # go tieng Viet, khong gach chan
 
-    TerminalMode = Off       # mac dinh: tat han
-    TerminalMode = Preedit   # van go duoc, co gach chan
+VS Code hien khong khai purpose TERMINAL, nen tu dong dung PREEDIT an toan bat
+ke option nay.
 
 Go roi: touch ~/.unikey/debug && ibus restart
-        cat ~/.unikey/debug.log        (in caps va che do da chon cho tung o nhap)
+        cat ~/.unikey/debug.log        (in instance, focus, purpose, caps, mode)
+
+Smoke test VTE sau khi cai engine moi va `ibus restart`:
+
+    python3 src/unikey-ibus/vte-smoke.py --terminal-mode off
+    python3 src/unikey-ibus/vte-smoke.py --terminal-mode preedit
 
 
 7. Phim tat

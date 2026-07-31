@@ -47,30 +47,38 @@ edit, not new code.
 
 ### DIRECT vs PREEDIT — read this before touching the commit path
 
-The IBus engine picks per input context from the `IBUS_CAP_SURROUNDING_TEXT` bit the *application*
-advertises (`uk_ibus_engine_set_capabilities` in [src/unikey-ibus/engine.c](src/unikey-ibus/engine.c)):
+The IBus engine uses the policy in
+[ibus-policy.h](src/unikey-ibus/ibus-policy.h), recomputed for each input context:
 
-- **with** the bit → DIRECT: commit straight, fix diacritics via `delete-surrounding-text`, no underline.
-- **without** it → whatever `TerminalMode` in `~/.unikey/options` says: `Off` (default, input
-  disabled) or `Preedit`.
+- password/PIN/hidden text → OFF;
+- `IBUS_INPUT_PURPOSE_TERMINAL` → `TerminalMode` (`Off` by default or transparent `Preedit`),
+  even if the caps contain `IBUS_CAP_SURROUNDING_TEXT`;
+- every other IBus context → transparent PREEDIT, regardless of capabilities.
 
-Measured on Ubuntu 26.04/GNOME: `caps=0x29 surrounding=yes` in browsers, `caps=0x9 surrounding=no`
-in gnome-terminal. **The flag is honest — trust it.** GTK/Qt modules never set
-`erase_before_cursor`, so they are always PREEDIT.
+An IBus surrounding-text capability does not prove that it represents the user's editable
+document. VS Code/xterm.js advertises `0x29` and FREE_FORM through Chromium's hidden textarea;
+deleting there is not an edit of the shell line and commits become PTY input. There is no app-id,
+widget role, or terminal purpose on this path, so auto-selecting DIRECT cannot be made reliable.
+DIRECT remains a bridge primitive for explicitly trusted frontends only. GTK/Qt modules are also
+always PREEDIT.
 
 Three approaches were tried and failed. Do not reintroduce them:
 
-1. **DIRECT everywhere, ignoring caps.** VTE (gnome-terminal) drops the delete silently, producing
-   `xem dđuouọcược chuaưa naoào` for `xem được chưa nào` — old characters survive and each
-   correction is appended. Browsers honour it, so it presents as "only the terminal is broken".
-2. **`forward_key_event(BackSpace)` instead of delete-surrounding.** Forwarded keys go through the
+1. **Selecting DIRECT from surrounding-text caps.** VTE may drop the delete, while
+   VS Code/xterm.js exposes only Chromium's hidden textarea rather than the shell buffer. Old
+   characters survive, or xterm sends a completed word twice.
+2. **Only replacing delete with `forward_key_event(BackSpace)`.** Forwarded keys go through the
    toolkit's event queue while `commit_text` is applied directly to the widget; nothing orders the
-   two, and this **breaks browsers as well**.
-3. **Detecting terminals via `IBUS_INPUT_PURPOSE_TERMINAL`.** `purpose` is always `0` (FREE_FORM),
-   even in gnome-terminal. Useless here; it survives only as a password-field check.
+   two, and this breaks browsers as well. An all-forward backend would be a separate design and
+   needs async/sync and GTK4 coverage.
+3. **Trusting `0x29` after a surrounding-text handshake.** It can still describe a helper buffer,
+   not the text being edited. The handshake is useful for diagnostics, not a DIRECT allowlist.
 
 Two related invariants, both easy to break:
 
+- IBus publishes every preedit update, including the empty one, with `IBUS_ENGINE_PREEDIT_CLEAR`.
+  On flush it emits CommitText before clearing preedit. Clearing first lets Chromium finalize and
+  send the old composition, then process CommitText as a second copy of the same word.
 - In DIRECT mode a pass-through character must be **committed by the bridge**, not returned as
   `UK_BRIDGE_PASS`. Letting the application insert it puts the character on the key-event path
   while the erase goes on the input-method path; fast typing reorders them (`đấy` → `đâdấyd`).
@@ -78,9 +86,11 @@ Two related invariants, both easy to break:
   ignored, swallowing it means the key does nothing until the engine buffer drains — it feels like
   "you have to hold backspace for a while".
 
-**Diagnose, don't guess:** `touch ~/.unikey/debug && ibus restart` makes the engine log each
-context's caps and chosen mode to `~/.unikey/debug.log`. An env var is no use — ibus-daemon spawns
-the engine. Every wrong turn above came from reasoning about this without measuring it.
+**Diagnose, don't guess:** `touch ~/.unikey/debug && ibus restart` makes the engine log the engine
+pointer, focus state, purpose, caps, and chosen mode to `~/.unikey/debug.log`. An env var is no use
+— ibus-daemon spawns the engine. The manual VTE regression harness is
+`python3 src/unikey-ibus/vte-smoke.py --terminal-mode off|preedit` after
+installing/restarting the engine.
 
 ### Cross-process state
 

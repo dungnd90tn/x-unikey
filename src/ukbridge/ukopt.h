@@ -16,11 +16,10 @@ typedef struct _UkXimOpt {
   long terminalMode;
 } UkXimOpt;
 
-/* Lam gi trong o nhap khong ho tro surrounding text (dien hinh la
-   gnome-terminal). Xem chu thich TerminalModeCmt trong ukopt.c. */
+/* Cach xu ly client khai bao input-purpose TERMINAL. */
 enum {
   UkTerminalOff,       /* tat han go tieng Viet */
-  UkTerminalPreedit    /* van go, dung preedit gach chan */
+  UkTerminalPreedit    /* van go, dung preedit */
 };
 
 int UkParseOptFile(const char *fileName, UkXimOpt *options);

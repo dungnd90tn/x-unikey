@@ -211,10 +211,10 @@ AC_ARG_WITH(ibus,
 	[unikey_ibus=$withval], [unikey_ibus=check])
 
 if test "X$unikey_ibus" != "Xno" ; then
-	PKG_CHECK_MODULES(IBUS, ibus-1.0 >= 1.5,
+	PKG_CHECK_MODULES(IBUS, ibus-1.0 >= 1.5.24,
 		[unikey_ibus=yes],
 		[if test "X$unikey_ibus" = "Xyes" ; then
-			AC_MSG_ERROR([--with-ibus was given but ibus-1.0 >= 1.5 was not found])
+			AC_MSG_ERROR([--with-ibus was given but ibus-1.0 >= 1.5.24 was not found])
 		 else
 			unikey_ibus=no
 			AC_MSG_WARN([ibus-1.0 not found (cai libibus-1.0-dev), IBus engine will not be built])
