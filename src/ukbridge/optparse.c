@@ -28,7 +28,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <pwd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "optparse.h"
 
 #ifndef NULL
@@ -40,8 +44,7 @@
 //--------------------------------------------------
 static int parseLine(char *line, char **name, char **value)
 {
-  char *p, *mark;
-  char ch;
+  char *p, *end, *equal;
 
   if (line == 0)
     return 0;
@@ -51,42 +54,38 @@ static int parseLine(char *line, char **name, char **value)
   if (p)
     *p = 0;
 
-  //get option name
-  for (p=line; *p == ' '; p++);
+  /* Ten option va gia tri duoc phep co khoang trang o hai dau. */
+  for (p = line; *p && isspace((unsigned char)*p); p++);
   if (*p == 0)
     return 0;
 
   *name = p;
-  mark = 0; //mark the last non-space character
-  while ((ch=*p) != '=' && ch!=0) {
-    if (ch != ' ')
-      mark = p;
-    p++;
-  }
-
-  if (ch == 0 && mark == 0)
+  equal = strchr(p, '=');
+  if (!equal)
     return 0;
-  *(mark+1) = 0; //terminate name with a null character
+  end = equal;
+  while (end > p && isspace((unsigned char)end[-1]))
+    end--;
+  if (end == p)
+    return 0;
+  *end = 0;
 
-  //get option value
-  p++;
-  while (*p == ' ') p++;
+  p = equal + 1;
+  while (*p && isspace((unsigned char)*p))
+    p++;
   if (*p == 0)
     return 0;
 
   *value = p;
-  mark = p;
-  while (*p) { //strip trailing spaces
-    if (*p != ' ')
-      mark = p;
-    p++;
-  }
-  *++mark = 0;
+  end = p + strlen(p);
+  while (end > p && isspace((unsigned char)end[-1]))
+    end--;
+  *end = 0;
   return 1;
 }
 
 //----------------------------------------------------
-int parseValue(OptItem *info, void *rec, const char *strValue)
+static int parseValue(OptItem *info, void *rec, const char *strValue)
 {
   char *addr = ((char *)rec)+info->offset;
   switch (info->type) {
@@ -106,15 +105,20 @@ int parseValue(OptItem *info, void *rec, const char *strValue)
       else
 	return 0;
 
-      *(long *)addr = v;
+      /* BoolOpt/LookupOpt fields are int. The old long store overwrote the
+         adjacent option on 64-bit platforms. */
+      *(int *)addr = v;
     }
     break;
   case StrOpt:
     {
       char **ppStr = (char **)addr;
+      char *newValue = strdup(strValue);
+      if (!newValue)
+	return 0;
       if (*ppStr)
 	free(*ppStr);
-      *ppStr = strdup(strValue);
+      *ppStr = newValue;
     }
     break;
   case LookupOpt:
@@ -129,7 +133,7 @@ int parseValue(OptItem *info, void *rec, const char *strValue)
       }
       if (!p->name)
 	return 0;
-      *(long *)addr = v;
+      *(int *)addr = (int)v;
     }
     break;
   case LongOpt:
@@ -145,7 +149,12 @@ int ParseOptFile(const char *fileName, void *optRec, OptItem *optList, int count
 {
   FILE *f;
   char *buf, *name, *value;
-  int bufSize, len, i;
+  size_t bufSize;
+  ssize_t len;
+  int i, ok = 1;
+
+  if (!fileName || !optRec || !optList || count < 0)
+    return 0;
 
   f = fopen(fileName, "r");
   if (f == 0) {
@@ -153,45 +162,45 @@ int ParseOptFile(const char *fileName, void *optRec, OptItem *optList, int count
     return 0;
   }
 
-  bufSize = 256;
-  buf = (char *)malloc(bufSize);
+  bufSize = 0;
+  buf = NULL;
 
-  while (!feof(f)) {
-  /* FreeBSD doesn't have getline, so don't use this
-    if ((len = getline(&buf, &bufSize, f)) == -1)
-      break;
-  */
-    if (fgets(buf, bufSize, f) == 0)
-      break;
-
-    len = strlen(buf);
-    if (len == 0)
-      break;
-
-    if (buf[len-1] == '\n')
-      buf[len-1] = 0;
+  while ((len = getline(&buf, &bufSize, f)) >= 0) {
+    if (len > 0 && buf[len-1] == '\n')
+      buf[--len] = 0;
+    if (len > 0 && buf[len-1] == '\r')
+      buf[--len] = 0;
     if (parseLine(buf, &name, &value)) {
       for (i=0; i<count; i++) {
 	if (strcasecmp(optList[i].name, name) == 0) {
-	  parseValue(&optList[i], optRec, value);
+	  if (!parseValue(&optList[i], optRec, value))
+	    ok = 0;
 	  break;
 	}
       }
     }
   }
+  if (ferror(f))
+    ok = 0;
   free(buf);
-  fclose(f);
-  return 1;
+  if (fclose(f) != 0)
+    ok = 0;
+  return ok;
 }
 
 //----------------------------------------------------
 int ParseExpandFileName(const char *name, char **expandedName)
 {
-  char *tmp, *path, *homeDir;
+  char *tmp, *path;
+  const char *homeDir;
   struct passwd *user;
-  int bufSize;
+  size_t homeLen, pathLen;
 
-  if (name == 0 || name[0] != '~') 
+  if (!expandedName)
+    return 0;
+  *expandedName = NULL;
+
+  if (name == 0 || name[0] != '~')
     return 0;
 
   tmp = strdup(name);
@@ -200,10 +209,18 @@ int ParseExpandFileName(const char *name, char **expandedName)
 
   if (tmp[1] == '/') {
     homeDir = getenv("HOME");
+    if (!homeDir || !*homeDir) {
+      user = getpwuid(getuid());
+      homeDir = (user && user->pw_dir && *user->pw_dir) ? user->pw_dir : NULL;
+    }
     path = tmp+1;
   }
   else if (tmp[1] == 0) {
     homeDir = getenv("HOME");
+    if (!homeDir || !*homeDir) {
+      user = getpwuid(getuid());
+      homeDir = (user && user->pw_dir && *user->pw_dir) ? user->pw_dir : NULL;
+    }
     path = "";
   }
   else {
@@ -227,32 +244,43 @@ int ParseExpandFileName(const char *name, char **expandedName)
     else path="";
   }
 
-  bufSize = strlen(homeDir) + strlen(path) + 1;
-  *expandedName = (char *)malloc(bufSize);
+  if (!homeDir) {
+    free(tmp);
+    return 0;
+  }
+
+  homeLen = strlen(homeDir);
+  pathLen = strlen(path);
+  if (homeLen > (size_t)-1 - pathLen - 1) {
+    free(tmp);
+    return 0;
+  }
+  *expandedName = (char *)malloc(homeLen + pathLen + 1);
   if (!*expandedName) {
     free(tmp);
     return 0;
   }
 
-  strcpy(*expandedName, homeDir);
-  strcat(*expandedName, path);
+  memcpy(*expandedName, homeDir, homeLen);
+  memcpy(*expandedName + homeLen, path, pathLen + 1);
   free(tmp);
   return 1;
 }
 
 //----------------------------------------------------
-void writeValue(FILE *f, OptItem *optInfo, void *rec)
+static void writeValue(FILE *f, OptItem *optInfo, void *rec)
 {
   void *addr = ((char *)rec)+optInfo->offset;
 
-  fputs(optInfo->comment, f);
+  if (optInfo->comment)
+    fputs(optInfo->comment, f);
 
   switch (optInfo->type) {
 
   case BoolOpt:
     fprintf(f, "%s = %s\n\n", 
 	    optInfo->name, 
-	    (*(long *)addr) ? "Yes" : "No");
+	    (*(int *)addr) ? "Yes" : "No");
     break;
 
   case StrOpt:
@@ -283,21 +311,91 @@ void writeValue(FILE *f, OptItem *optInfo, void *rec)
 }
 
 //----------------------------------------------------
+static int fsyncParentDir(const char *fileName)
+{
+  char *dir, *slash;
+  int fd, ok;
+
+  dir = strdup(fileName);
+  if (!dir)
+    return 0;
+  slash = strrchr(dir, '/');
+  if (!slash) {
+    free(dir);
+    dir = strdup(".");
+    if (!dir)
+      return 0;
+  }
+  else if (slash == dir)
+    slash[1] = 0;
+  else
+    *slash = 0;
+
+  fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  free(dir);
+  if (fd < 0)
+    return 0;
+  ok = fsync(fd) == 0;
+  if (close(fd) != 0)
+    ok = 0;
+  return ok;
+}
+
+//----------------------------------------------------
 int ParseWriteOptFile(const char *fileName, const char *header,
 		    void *optRec, OptItem *optList, int count)
 {
+  char *tmpName;
+  size_t tmpLen;
+  struct stat st;
   FILE *f;
-  int i;
+  int fd, i, ok = 1;
 
-  f = fopen(fileName, "w");
-  if (!f)
+  if (!fileName || !*fileName || !optRec || !optList || count < 0)
     return 0;
 
-  fputs(header, f);
+  tmpLen = strlen(fileName) + sizeof(".tmp.XXXXXX");
+  tmpName = (char *)malloc(tmpLen);
+  if (!tmpName)
+    return 0;
+  snprintf(tmpName, tmpLen, "%s.tmp.XXXXXX", fileName);
+
+  fd = mkstemp(tmpName);
+  if (fd < 0) {
+    free(tmpName);
+    return 0;
+  }
+
+  /* Giu quyen cua file cu; file moi cua nguoi dung mac dinh la 0600. */
+  if (stat(fileName, &st) == 0 && fchmod(fd, st.st_mode & 0777) != 0)
+    ok = 0;
+
+  f = fdopen(fd, "w");
+  if (!f) {
+    close(fd);
+    unlink(tmpName);
+    free(tmpName);
+    return 0;
+  }
+
+  if (header)
+    fputs(header, f);
   for (i=0; i<count; i++) {
     writeValue(f, &optList[i], optRec);
   }
 
-  fclose(f);
-  return 1;
+  if (ferror(f) || fflush(f) != 0 || fsync(fileno(f)) != 0)
+    ok = 0;
+  if (fclose(f) != 0)
+    ok = 0;
+  if (ok) {
+    if (rename(tmpName, fileName) != 0)
+      ok = 0;
+    else
+      (void)fsyncParentDir(fileName);
+  }
+  if (!ok)
+    unlink(tmpName);
+  free(tmpName);
+  return ok;
 }

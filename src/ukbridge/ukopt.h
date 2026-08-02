@@ -6,14 +6,14 @@
 
 typedef struct _UkXimOpt {
   UnikeyOptions uk;
-  long inputMethod;
-  long charset;
-  long enabled;
-  long bellNotify;
-  long autoSave;
+  int inputMethod;
+  int charset;
+  int enabled;
+  int bellNotify;
+  int autoSave;
   char *macroFile;
   char *usrKeyMapFile;
-  long terminalMode;
+  int terminalMode;
 } UkXimOpt;
 
 /* Cach xu ly client khai bao input-purpose TERMINAL. */
@@ -24,8 +24,9 @@ enum {
 
 int UkParseOptFile(const char *fileName, UkXimOpt *options);
 int UkWriteOptFile(const char *fileName, UkXimOpt *options);
-char *UkGetDefConfFileName();
+int UkWriteOptFileAtomic(const char *fileName, UkXimOpt *options);
+char *UkGetDefConfFileName(void);
 void UkSetDefOptions(UkXimOpt *options);
-void UkTestDefConfFile();
+int UkTestDefConfFile(void);
 
 #endif

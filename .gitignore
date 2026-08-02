@@ -52,9 +52,11 @@ Makefile
 /src/xim/ukxim
 /src/gui/unikey
 /src/unikey-ibus/ibus-engine-unikey
+/src/unikey-ibus/ibus-setup-unikey
 
 # file sinh ra luc build
 /src/unikey-ibus/unikey.xml
+/src/unikey-ibus/ibus-setup-unikey.desktop
 /src/unikey-qt/main.moc
 /src/unikey-qt/moc_*.cpp
 

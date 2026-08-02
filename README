@@ -14,7 +14,7 @@ Thanh phan
                              -> Input Sources. Cach dung duoc khuyen nghi.
     im-unikey.so             Module GTK3
     libim-unikey.so          Module GTK4
-    libunikeyplatform...so   Plugin Qt5/Qt6
+    libunikeyplatform...so   Plugin Qt6
 
   Dung chung:
     ukbridge                 Toan bo logic go tieng Viet cua cac
@@ -111,6 +111,13 @@ len se bo lai /usr/local/libexec/ibus-engine-unikey mo coi:
     sudo dpkg -i release/x-unikey_*.deb
     ibus restart
 
+Neu desktop con hien cua so XIM cu `TX: UTF8`, do la `/usr/local/bin/unikey`
+duoc mot file autostart cu khoi dong, khong phai UI cua IBus engine. Don rieng
+ba artifact cu, nhung giu `~/.unikey` cho engine moi:
+
+    # chay tu cay ma nguon x-unikey
+    sudo ./install-standalone.sh cleanup-legacy
+
 
 4. Dung: qua Settings (khuyen nghi)
 -----------------------------------
@@ -130,6 +137,24 @@ len se bo lai /usr/local/libexec/ibus-engine-unikey mo coi:
 Cach nay khong can bien moi truong nao, co chi bao tren thanh tren cung, va
 go duoc vao ca VSCode / ung dung Electron / ung dung GTK4 Wayland -- nhung
 app ma module toolkit khong voi toi duoc (xem doc/STANDALONE.md muc 6).
+
+4.a Cau hinh
+-------------
+
+Mo menu `VN` tren thanh IBus, chon `Cai dat...`; hoac bam Preferences cua
+Vietnamese (UniKey) trong IBus/Settings. Cua so chi chay khi duoc mo, khong co
+tray/status window va khong tu khoi dong cung desktop.
+
+Co the chon Telex/VNI/VIQR/kieu tu dinh nghia, TerminalMode Off/Preedit,
+dat dau tu do, kieu dat dau, kiem tra chinh ta, tu khoi phuc tu ngoai, macro
+va keymap rieng. Bang ma hien dai co dinh la Unicode (UTF-8): IBus/Wayland
+khong the commit an toan byte TCVN/VNI legacy.
+
+DIRECT/PREEDIT/OFF la che do tu dong theo tung o nhap, khong phai cong tac
+toan cuc. Cau hinh duoc ghi nguyen tu vao `~/.unikey/options`, giu ban cu dau
+tien o `~/.unikey/options.bak`. Kieu go va trang thai bat/tat co hieu luc ngay;
+cac tuy chon tinh (TerminalMode, dat dau, spell-check, macro) co hieu luc sau
+`ibus restart` hoac sau khi khoi dong lai ung dung dung module GTK/Qt.
 
 
 5. Dung: module toolkit (khi khong co ibus)
@@ -165,6 +190,8 @@ IBus engine chon che do theo input purpose cua tung o nhap:
 
     password/PIN          -> OFF
     purpose=TERMINAL      -> theo TerminalMode       (gnome-terminal/VTE)
+    purpose=URL + surrounding -> DIRECT               (Chromium address bar)
+    Firefox FREE_FORM+h0x40+surrounding -> DIRECT      (mozAwesomebar fallback)
     moi context con lai   -> PREEDIT trong suot       (web, app, VS Code/xterm.js)
 
 `IBUS_CAP_SURROUNDING_TEXT` chi noi rang client co mot buffer protocol, khong
@@ -172,6 +199,15 @@ chung minh buffer do la van ban nguoi dung dang sua. VS Code/xterm.js la phan
 vi du: textarea an cua Chromium bao caps=0x29 va purpose=FREE_FORM, nhung thao
 tac delete/commit tren no duoc xterm.js bien thanh byte gui vao PTY. Vi khong co
 app-id hay purpose de nhan ra terminal nay, IBus khong tu chon DIRECT tu caps.
+Ngoai le hep la thanh dia chi: day la buffer that. Engine doi den khi
+surrounding-text duoc xac nhan roi dung DIRECT, nen van go duoc tieng Viet de
+search ma khong hien composition/predict. Chromium gui purpose=URL roi co the
+tam tra ve FREE_FORM; engine giu co URL den het phien focus. Firefox dung
+`inputmode=mozAwesomebar` ma GTK hien chua map sang URL, nen engine latch them
+heuristic FREE_FORM + hint UPPERCASE_SENTENCES (0x40) ma Firefox gui. Hint nay
+khong phai app-id Firefox; surrounding van bat buoc, con password/terminal duoc
+uu tien truoc. Chi FREE_FORM + surrounding van khong du de bat DIRECT, de giu
+an toan cho terminal.
 
 Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
 
@@ -228,7 +264,7 @@ Khi dung qua ibus, Super-Space cua GNOME va Ctrl-Shift la hai cong tac doc
 lap: Ctrl-Shift tat tieng Viet ben trong engine nhung chi bao tren thanh
 tren cung van hien VN.
 
-    Cau hinh:             ~/.unikey/options
+    Cau hinh:             menu VN -> Cai dat...; file ~/.unikey/options
     Trang thai bat/tat:   ~/.unikey/state    (dong bo giua cac ung dung)
     Macro, kieu go rieng: xem doc/keymap-syntax, doc/im-samples/, doc/ukmacro
 

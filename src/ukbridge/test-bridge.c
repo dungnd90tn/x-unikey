@@ -7,10 +7,15 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "keycons.h"
+#include "optparse.h"
 #include "ukbridge.h"
+#include "ukopt.h"
 #include "../unikey-ibus/ibus-policy.h"
 
 /*----------------------------------------------------------------
@@ -38,7 +43,9 @@ static void fake_preedit(void *user, const char *utf8)
             sizeof(e->events) - strlen(e->events) - 1);
 }
 
-static const UkBridgeVTable FakeVTable = { fake_commit, fake_preedit };
+static const UkBridgeVTable FakeVTable = {
+    fake_commit, fake_preedit, NULL
+};
 
 /* Van ban ma nguoi dung nhin thay = da commit + phan preedit dang go */
 static const char *visible(FakeEntry *e, char *out, size_t n)
@@ -252,13 +259,14 @@ static void check_mode_switch(void)
   "dduoc..."/"dđưoơcợc" vi bo qua lenh xoa.
  ----------------------------------------------------------------*/
 static void check_ibus_policy_case(const char *name,
-                                   int secret, int terminal,
+                                   int secret, int terminal, int direct_entry,
                                    int caps_known, int can_surround,
                                    int fallback_preedit,
                                    UkIBusMode expect)
 {
-    UkIBusMode got = uk_ibus_policy_choose(secret, terminal, caps_known,
-                                           can_surround, fallback_preedit);
+    UkIBusMode got = uk_ibus_policy_choose(secret, terminal, direct_entry,
+                                           caps_known, can_surround,
+                                           fallback_preedit);
 
     if (got == expect)
         printf("  ok   policy %-28s -> %d\n", name, got);
@@ -271,32 +279,118 @@ static void check_ibus_policy_case(const char *name,
 
 static void check_ibus_policy(void)
 {
+    int url_latch;
+    int sentence_latch;
+    int trace_latch;
+    int trace_ok;
+
     /* VTE: purpose terminal thang caps 0x29 gia, nhung van ton trong option. */
     check_ibus_policy_case("terminal preedit + caps gia",
-                           0, 1, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
+                           0, 1, 0, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
     check_ibus_policy_case("terminal off + caps gia",
-                           0, 1, 1, 1, 0, UK_IBUS_MODE_OFF);
+                           0, 1, 0, 1, 1, 0, UK_IBUS_MODE_OFF);
     check_ibus_policy_case("terminal off + no surrounding",
-                           0, 1, 1, 0, 0, UK_IBUS_MODE_OFF);
+                           0, 1, 0, 1, 0, 0, UK_IBUS_MODE_OFF);
+
+    /* Chromium address bar khai purpose=URL (5): DIRECT de van go duoc tieng
+       Viet khi search, nhung khong vao PREEDIT/predict. */
+    check_ibus_policy_case("URL bar + surrounding",
+                           0, 0, 1, 1, 1, 1, UK_IBUS_MODE_DIRECT);
+    check_ibus_policy_case("URL latched, purpose ve p0",
+                           0, 0, 1, 1, 1, 0, UK_IBUS_MODE_DIRECT);
+    check_ibus_policy_case("URL bar chua co caps",
+                           0, 0, 1, 0, 0, 1, UK_IBUS_MODE_OFF);
+    check_ibus_policy_case("URL bar no surrounding",
+                           0, 0, 1, 1, 0, 1, UK_IBUS_MODE_OFF);
+
+    /* Firefox 153/GTK gui mozAwesomebar thanh p0+h0x40, roi h0. Latch hint
+       de no khong roi lai PREEDIT khi caps doi 0x9 -> 0x29. */
+    sentence_latch = uk_ibus_policy_update_sentence_latch(0, 1, 1);
+    sentence_latch = uk_ibus_policy_update_sentence_latch(sentence_latch, 1, 0);
+    check_ibus_policy_case("Firefox URL + surrounding",
+                           0, 0, sentence_latch, 1, 1, 1,
+                           UK_IBUS_MODE_DIRECT);
+    check_ibus_policy_case("Firefox URL chua surrounding",
+                           0, 0, sentence_latch, 1, 0, 1,
+                           UK_IBUS_MODE_OFF);
+    check_ibus_policy_case("terminal uu tien Firefox hint",
+                           0, 1, sentence_latch, 1, 1, 0,
+                           UK_IBUS_MODE_OFF);
+    check_ibus_policy_case("terminal preedit uu tien hint",
+                           0, 1, sentence_latch, 1, 1, 1,
+                           UK_IBUS_MODE_PREEDIT);
+    check_ibus_policy_case("password uu tien Firefox hint",
+                           1, 0, sentence_latch, 1, 1, 1,
+                           UK_IBUS_MODE_OFF);
+
+    /* Replay dung thu tu da ghi trong debug.log cua Firefox 153 Wayland:
+       p0/h0,caps? -> caps0x9 -> h0x40 -> caps0x29 -> h0 -> focus reset. */
+    trace_latch = 0;
+    trace_ok =
+        uk_ibus_policy_choose(0, 0, trace_latch, 0, 0, 1) ==
+            UK_IBUS_MODE_PREEDIT &&
+        uk_ibus_policy_choose(0, 0, trace_latch, 1, 0, 1) ==
+            UK_IBUS_MODE_PREEDIT;
+    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 1, 1);
+    trace_ok = trace_ok &&
+        uk_ibus_policy_choose(0, 0, trace_latch, 1, 0, 1) ==
+            UK_IBUS_MODE_OFF &&
+        uk_ibus_policy_choose(0, 0, trace_latch, 1, 1, 1) ==
+            UK_IBUS_MODE_DIRECT;
+    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 1, 0);
+    trace_ok = trace_ok &&
+        uk_ibus_policy_choose(0, 0, trace_latch, 1, 1, 1) ==
+            UK_IBUS_MODE_DIRECT;
+    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 0, 0);
+    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 1, 0);
+    trace_ok = trace_ok && trace_latch == 0 &&
+        uk_ibus_policy_choose(0, 0, trace_latch, 1, 1, 1) ==
+            UK_IBUS_MODE_PREEDIT;
+    if (trace_ok)
+        printf("  ok   policy Firefox trace: h0 -> h0x40 -> caps0x29 -> reset\n");
+    else {
+        printf("  FAIL policy Firefox trace\n");
+        Failures++;
+    }
 
     /* Luc IBus chua tra capability, khong duoc mao hiem commit DIRECT. */
     check_ibus_policy_case("capability chua biet",
-                           0, 0, 0, 0, 0, UK_IBUS_MODE_PREEDIT);
+                           0, 0, 0, 0, 0, 0, UK_IBUS_MODE_PREEDIT);
 
     /* IBus caps khong chung minh duoc editable buffer. VS Code/xterm.js bao
        surrounding qua textarea an nhung DIRECT lam hong du lieu PTY. */
     check_ibus_policy_case("entry co surrounding",
-                           0, 0, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
+                           0, 0, 0, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
 
     /* Client khong khai purpose terminal cung phai dung PREEDIT an toan. */
     check_ibus_policy_case("legacy fallback preedit",
-                           0, 0, 1, 0, 1, UK_IBUS_MODE_PREEDIT);
+                           0, 0, 0, 1, 0, 1, UK_IBUS_MODE_PREEDIT);
     check_ibus_policy_case("legacy fallback off",
-                           0, 0, 1, 0, 0, UK_IBUS_MODE_PREEDIT);
+                           0, 0, 0, 1, 0, 0, UK_IBUS_MODE_PREEDIT);
 
     /* Bao mat luon co do uu tien cao nhat. */
     check_ibus_policy_case("password terminal",
-                           1, 1, 1, 1, 1, UK_IBUS_MODE_OFF);
+                           1, 1, 0, 1, 1, 1, UK_IBUS_MODE_OFF);
+
+    url_latch = uk_ibus_policy_update_url_latch(0, 1, 0);
+    url_latch = uk_ibus_policy_update_url_latch(url_latch, 0, 1);
+    if (url_latch == 1 &&
+        uk_ibus_policy_update_url_latch(url_latch, 0, 0) == 0) {
+        printf("  ok   policy URL latch: URL -> FREE_FORM, reset explicit\n");
+    } else {
+        printf("  FAIL policy URL latch\n");
+        Failures++;
+    }
+
+    if (sentence_latch == 1 &&
+        uk_ibus_policy_update_sentence_latch(0, 1, 0) == 0 &&
+        uk_ibus_policy_update_sentence_latch(0, 0, 1) == 0 &&
+        uk_ibus_policy_update_sentence_latch(sentence_latch, 0, 1) == 0) {
+        printf("  ok   policy Firefox latch: h0x40 -> h0, reset explicit\n");
+    } else {
+        printf("  FAIL policy Firefox latch\n");
+        Failures++;
+    }
 }
 
 /* IBus Reset co the den khi click/doi caret/huy composition. No phai xoa
@@ -367,6 +461,9 @@ static void check_shared_state(void)
 {
     FakeEntry e1, e2;
     UkBridge *app1, *app2;
+    char *statePath;
+    size_t statePathLen;
+    FILE *stateFile;
     int changed;
 
     memset(&e1, 0, sizeof(e1));
@@ -403,8 +500,316 @@ static void check_shared_state(void)
         Failures++;
     }
 
+    /* State bi hong khong duoc bien atoi("abc") thanh Telex/Off. */
+    uk_bridge_set_enabled(app1, 1);
+    uk_bridge_state_dispatch(app1);  /* drain event cua chinh app1 */
+    statePathLen = strlen(getenv("HOME")) + sizeof("/.unikey/state");
+    statePath = (char *)malloc(statePathLen);
+    snprintf(statePath, statePathLen, "%s/.unikey/state", getenv("HOME"));
+    stateFile = fopen(statePath, "w");
+    if (stateFile) {
+        fputs("enabled=abc\nmethod=abc\n", stateFile);
+        fclose(stateFile);
+    }
+    changed = uk_bridge_state_dispatch(app1);
+    if (stateFile && !changed && uk_bridge_get_enabled(app1) == 1 &&
+        uk_bridge_get_input_method(app1) == UkVni)
+        printf("  ok   state sai cu phap: giu nguyen trang thai hien tai\n");
+    else {
+        printf("  FAIL state sai cu phap lam doi enabled/method\n");
+        Failures++;
+    }
+    free(statePath);
+
     uk_bridge_free(app1);
     uk_bridge_free(app2);
+}
+
+/*----------------------------------------------------------------
+  Parser options: tren amd64, ban cu ghi long 8 byte vao cac truong int 4
+  byte va co the de len option ke ben. Dong thoi kiem tra writer atomic cua
+  Preferences.
+ ----------------------------------------------------------------*/
+static void free_config_strings(UkXimOpt *opt)
+{
+    free(opt->macroFile);
+    free(opt->usrKeyMapFile);
+    opt->macroFile = NULL;
+    opt->usrKeyMapFile = NULL;
+}
+
+typedef struct {
+    int before;
+    int flag;
+    int after;
+} BoolProbe;
+
+static int file_contains(const char *path, const char *needle)
+{
+    char line[256];
+    FILE *f = fopen(path, "r");
+
+    if (!f)
+        return 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, needle)) {
+            fclose(f);
+            return 1;
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+static void check_config_paths(void)
+{
+    char longHome[384];
+    const char *currentHome = getenv("HOME");
+    char *savedHome = currentHome ? strdup(currentHome) : NULL;
+    const char *path;
+    int longOk, missingOk;
+
+    memset(longHome, 'h', sizeof(longHome));
+    memcpy(longHome, "/tmp/", 5);
+    longHome[sizeof(longHome) - 1] = 0;
+    setenv("HOME", longHome, 1);
+    path = UkGetDefConfFileName();
+    longOk = path && strlen(path) > 128 &&
+             strcmp(path + strlen(path) - strlen("/.unikey/options"),
+                    "/.unikey/options") == 0;
+
+    unsetenv("HOME");
+    path = UkGetDefConfFileName();
+    missingOk = path && *path;
+
+    if (savedHome) {
+        setenv("HOME", savedHome, 1);
+        free(savedHome);
+    } else
+        unsetenv("HOME");
+
+    if (longOk && missingOk)
+        printf("  ok   config path: HOME dai/bi unset khong tran bo dem\n");
+    else {
+        printf("  FAIL config path (long=%d missing=%d)\n", longOk, missingOk);
+        Failures++;
+    }
+}
+
+static void check_config_parser(void)
+{
+    BoolProbe probe = { 0x13572468, -1, 0x24681357 };
+    OptItem probeList[] = {
+        {"Flag", "", offsetof(BoolProbe, flag), BoolOpt, NULL}
+    };
+    UkXimOpt opt;
+    FILE *f;
+    const char *path, *home;
+    char *probePath, *backupPath, *keymapPath;
+    size_t pathLen;
+    struct stat before, after;
+    int ok, atomicOk, backupOk, invalidOk, unreadableOk, userFallbackOk;
+
+    check_config_paths();
+
+    home = getenv("HOME");
+    pathLen = strlen(home) + sizeof("/bool-probe");
+    probePath = (char *)malloc(pathLen);
+    snprintf(probePath, pathLen, "%s/bool-probe", home);
+    f = fopen(probePath, "w");
+    if (f) {
+        fputs("Flag = Yes\n", f);
+        fclose(f);
+        ok = ParseOptFile(probePath, &probe, probeList, 1) &&
+             probe.before == 0x13572468 && probe.flag == 1 &&
+             probe.after == 0x24681357;
+    } else {
+        ok = 0;
+    }
+    unlink(probePath);
+    free(probePath);
+
+    if (ok)
+        printf("  ok   BoolOpt 64-bit: khong ghi de hai truong ke ben\n");
+    else {
+        printf("  FAIL BoolOpt 64-bit ghi de bo nho\n");
+        Failures++;
+    }
+
+    UkTestDefConfFile();
+    path = UkGetDefConfFileName();
+    f = fopen(path, "w");
+    if (!f) {
+        printf("  FAIL config parser: khong tao duoc file test\n");
+        Failures++;
+        return;
+    }
+    fputs("AutoSave = No\n"
+          "TerminalMode = Preedit\n"
+          "InitState = Off\n"
+          "Input = VNI\n"
+          "FreeStyle = No\n"
+          "ModernStyle = Yes\n"
+          "Bell = No\n"
+          "EnableSpellCheck = No\n"
+          "AutoRestoreNonVn = Yes\n"
+          "LegacyOption = keep-me\n", f);
+    fclose(f);
+
+    UkSetDefOptions(&opt);
+    ok = UkParseOptFile(path, &opt) &&
+         opt.autoSave == 0 && opt.terminalMode == UkTerminalPreedit &&
+         opt.enabled == 0 && opt.inputMethod == UkVni &&
+         opt.uk.freeMarking == 0 && opt.uk.modernStyle == 1 &&
+         opt.bellNotify == 0 && opt.uk.spellCheckEnabled == 0 &&
+         opt.uk.autoNonVnRestore == 1;
+    free_config_strings(&opt);
+
+    if (ok)
+        printf("  ok   config parser 64-bit: cac option khong de len nhau\n");
+    else {
+        printf("  FAIL config parser 64-bit\n");
+        Failures++;
+    }
+
+    /* Tra lai default qua dung duong ghi ma Preferences se dung. File cu
+       phai duoc giu mot lan de khong mat khoa legacy chua biet. */
+    atomicOk = stat(path, &before) == 0;
+    UkSetDefOptions(&opt);
+    if (!UkWriteOptFileAtomic(path, &opt))
+        atomicOk = 0;
+    else if (!atomicOk || stat(path, &after) != 0 ||
+             (before.st_dev == after.st_dev && before.st_ino == after.st_ino))
+        atomicOk = 0;
+    pathLen = strlen(path) + sizeof(".bak");
+    backupPath = (char *)malloc(pathLen);
+    snprintf(backupPath, pathLen, "%s.bak", path);
+    backupOk = file_contains(backupPath, "LegacyOption = keep-me");
+    free(backupPath);
+
+    if (atomicOk && backupOk)
+        printf("  ok   config writer: atomic + backup khoa legacy\n");
+    else {
+        printf("  FAIL config writer (atomic=%d backup=%d)\n",
+               atomicOk, backupOk);
+        Failures++;
+    }
+    free_config_strings(&opt);
+
+    /* Gia tri sai cua mot khoa da biet phai lam parse that bai, khong duoc
+       am tham bao thanh cong roi ap nua default nua config. */
+    f = fopen(path, "w");
+    if (f) {
+        fputs("TerminalMode = khong-hop-le\n", f);
+        fclose(f);
+    }
+    UkSetDefOptions(&opt);
+    invalidOk = f && !UkParseOptFile(path, &opt);
+    free_config_strings(&opt);
+    if (invalidOk)
+        printf("  ok   config parser: tu choi gia tri da biet bi sai\n");
+    else {
+        printf("  FAIL config parser chap nhan gia tri sai\n");
+        Failures++;
+    }
+
+    /* File ton tai nhung khong doc duoc phai duoc giu nguyen, khong bi thay
+       bang default chi vi fopen tra loi. */
+    unreadableOk = stat(path, &before) == 0 && chmod(path, 0000) == 0 &&
+                   !UkTestDefConfFile() && stat(path, &after) == 0 &&
+                   before.st_dev == after.st_dev && before.st_ino == after.st_ino;
+    chmod(path, 0600);
+    if (unreadableOk)
+        printf("  ok   config unreadable: giu nguyen file, khong ghi default\n");
+    else {
+        printf("  FAIL config unreadable bi thay the hoac bao thanh cong\n");
+        Failures++;
+    }
+
+    /* USER keymap sai cu phap khong duoc de state/UI bao USER trong khi engine
+       van am tham dung Telex hay keymap cu. */
+    pathLen = strlen(home) + sizeof("/bad-keymap");
+    keymapPath = (char *)malloc(pathLen);
+    snprintf(keymapPath, pathLen, "%s/bad-keymap", home);
+    f = fopen(keymapPath, "w");
+    if (f) {
+        fputs("x = LenhKhongTonTai\n", f);
+        fclose(f);
+    }
+    UkSetDefOptions(&opt);
+    opt.inputMethod = UkUsrIM;
+    opt.usrKeyMapFile = strdup(keymapPath);
+    userFallbackOk = f && opt.usrKeyMapFile &&
+                     UkWriteOptFileAtomic(path, &opt);
+    free_config_strings(&opt);
+    if (userFallbackOk) {
+        FakeEntry entry;
+        UkBridge *bridge;
+        memset(&entry, 0, sizeof(entry));
+        bridge = uk_bridge_new(&FakeVTable, &entry);
+        userFallbackOk = bridge &&
+                         uk_bridge_get_input_method(bridge) == UkTelex;
+        uk_bridge_free(bridge);
+    }
+    unlink(keymapPath);
+    free(keymapPath);
+    if (userFallbackOk)
+        printf("  ok   USER keymap sai: fallback Telex, khong lech UI/engine\n");
+    else {
+        printf("  FAIL USER keymap sai khong fallback Telex\n");
+        Failures++;
+    }
+
+    UkSetDefOptions(&opt);
+    if (!UkWriteOptFileAtomic(path, &opt)) {
+        printf("  FAIL khong khoi phuc duoc config test mac dinh\n");
+        Failures++;
+    }
+    free_config_strings(&opt);
+}
+
+/* Options la cau hinh tinh. Moi context co mot inotify fd rieng nhung loi
+   UniKey la singleton theo tien trinh; context khong focus tuyet doi khong
+   duoc reload/reset engine global giua composition cua context dang focus. */
+static void check_options_do_not_reload_mid_composition(void)
+{
+    FakeEntry focused_entry, background_entry;
+    UkBridge *focused, *background;
+    UkXimOpt opt;
+    char shown[256];
+    int ok;
+
+    memset(&focused_entry, 0, sizeof(focused_entry));
+    memset(&background_entry, 0, sizeof(background_entry));
+    focused = uk_bridge_new(&FakeVTable, &focused_entry);
+    background = uk_bridge_new(&FakeVTable, &background_entry);
+    uk_bridge_state_dispatch(focused);
+    uk_bridge_state_dispatch(background);
+
+    type_ascii(focused, "tie");
+    UkSetDefOptions(&opt);
+    opt.uk.modernStyle = 1;
+    ok = UkWriteOptFileAtomic(UkGetDefConfFileName(), &opt) &&
+         !uk_bridge_state_dispatch(background);
+    free_config_strings(&opt);
+
+    type_ascii(focused, "engs");
+    ok = ok && strcmp(visible(&focused_entry, shown, sizeof(shown)),
+                      "tiếng") == 0;
+
+    UkSetDefOptions(&opt);
+    if (!UkWriteOptFileAtomic(UkGetDefConfFileName(), &opt))
+        ok = 0;
+    free_config_strings(&opt);
+    uk_bridge_free(background);
+    uk_bridge_free(focused);
+
+    if (ok)
+        printf("  ok   options tinh: context nen khong reset composition\n");
+    else {
+        printf("  FAIL options reload lam lech singleton/context\n");
+        Failures++;
+    }
 }
 
 /*----------------------------------------------------------------*/
@@ -413,10 +818,14 @@ int main(void)
     /* Khong dung ~/.unikey cua nguoi dung: test phai doc lap cau hinh may. */
     char tmpl[] = "/tmp/ukbridge-test-XXXXXX";
     char *home = mkdtemp(tmpl);
-    if (home)
-        setenv("HOME", home, 1);
+    if (!home || setenv("HOME", home, 1) != 0) {
+        fprintf(stderr, "khong tao duoc HOME tam cho test\n");
+        return 1;
+    }
 
     printf("ukbridge:\n");
+
+    check_config_parser();
 
     /* TELEX */
     check(UkTelex, "telex", "tieengs",       "tiếng");
@@ -467,6 +876,7 @@ int main(void)
     check_reset_cancels();
     check_commit_before_clear();
     check_shared_state();
+    check_options_do_not_reload_mid_composition();
 
     if (Failures == 0)
         printf("=> tat ca deu dat\n");

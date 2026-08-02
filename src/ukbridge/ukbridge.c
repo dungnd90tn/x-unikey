@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/inotify.h>
@@ -38,12 +41,13 @@ struct _UkBridge {
 
     int            direct_mode;   /* commit thang thay vi dung preedit */
     int            terminal_mode; /* UkTerminalOff | UkTerminalPreedit */
+    int            user_keymap_loaded;
     int            commit_before_preedit_clear;
 };
 
 static int GlobalInited = 0;
 
-static void state_path(char *buf, int n);
+static char *state_path(void);
 static void state_write(UkBridge *b);
 static void state_read(UkBridge *b);
 static void state_watch_init(UkBridge *b);
@@ -138,8 +142,10 @@ UkBridge *uk_bridge_new(const UkBridgeVTable *vt, void *user_data)
     buf_init(&b->preedit);
     buf_init(&b->commit_buf);
     uk_bridge_load_config(b);
-    state_read(b);          /* trang thai dung chung de len tren file cau hinh */
+    /* Dat watch truoc snapshot state: save xay ra trong luc khoi tao se hoac
+       nam trong snapshot, hoac de lai event cho lan dispatch dau tien. */
     state_watch_init(b);
+    state_read(b);          /* trang thai dung chung de len tren file cau hinh */
     return b;
 }
 
@@ -370,6 +376,10 @@ void uk_bridge_toggle(UkBridge *b)
 
 void uk_bridge_set_input_method(UkBridge *b, int im)
 {
+    if (im != UkTelex && im != UkVni && im != UkViqr && im != UkUsrIM)
+        return;
+    if (im == UkUsrIM && !b->user_keymap_loaded)
+        return;
     uk_bridge_flush(b);
     b->inputMethod = im;
     UnikeySetInputMethod((UkInputMethod)im);
@@ -414,10 +424,26 @@ int uk_bridge_apply_action(UkBridge *b, int action)
   Trang thai dung chung giua cac tien trinh (~/.unikey/state)
  ================================================================*/
 
-static void state_path(char *buf, int n)
+static char *state_path(void)
 {
-    const char *home = getenv("HOME");
-    snprintf(buf, n, "%s/.unikey/state", home ? home : "/tmp");
+    const char *options = UkGetDefConfFileName();
+    const char *slash;
+    size_t dirLen;
+    char *path;
+
+    if (!options)
+        return NULL;
+    slash = strrchr(options, '/');
+    if (!slash)
+        return strdup("state");
+
+    dirLen = (size_t)(slash - options) + 1;
+    path = (char *)malloc(dirLen + sizeof("state"));
+    if (!path)
+        return NULL;
+    memcpy(path, options, dirLen);
+    memcpy(path + dirLen, "state", sizeof("state"));
+    return path;
 }
 
 /* Ghi nguyen tu: ghi ra file tam roi rename, de tien trinh khac khong bao gio
@@ -425,69 +451,157 @@ static void state_path(char *buf, int n)
    su kien inotify ma ta theo doi. */
 static void state_write(UkBridge *b)
 {
-    char path[256], tmp[300];
+    char *path, *tmp;
+    size_t tmpLen;
     FILE *f;
+    int fd, ok = 1;
 
-    state_path(path, sizeof(path));
-    snprintf(tmp, sizeof(tmp), "%s.tmp.%d", path, (int)getpid());
-
-    f = fopen(tmp, "w");
-    if (!f)
+    path = state_path();
+    if (!path)
         return;
-    fprintf(f, "enabled=%d\nmethod=%d\n", b->enabled, b->inputMethod);
-    fclose(f);
+    tmpLen = strlen(path) + sizeof(".tmp.XXXXXX");
+    tmp = (char *)malloc(tmpLen);
+    if (!tmp) {
+        free(path);
+        return;
+    }
+    snprintf(tmp, tmpLen, "%s.tmp.XXXXXX", path);
 
-    if (rename(tmp, path) != 0)
+    fd = mkstemp(tmp);
+    if (fd < 0) {
+        free(tmp);
+        free(path);
+        return;
+    }
+    f = fdopen(fd, "w");
+    if (!f) {
+        close(fd);
         unlink(tmp);
+        free(tmp);
+        free(path);
+        return;
+    }
+
+    if (fprintf(f, "enabled=%d\nmethod=%d\n",
+                b->enabled, b->inputMethod) < 0 ||
+        fflush(f) != 0 || fsync(fileno(f)) != 0)
+        ok = 0;
+    if (fclose(f) != 0)
+        ok = 0;
+
+    if (ok && rename(tmp, path) != 0)
+        ok = 0;
+    if (ok) {
+        char *dir = strdup(path);
+        char *slash = dir ? strrchr(dir, '/') : NULL;
+        int dir_fd;
+
+        if (slash) {
+            if (slash == dir)
+                slash[1] = '\0';
+            else
+                *slash = '\0';
+        }
+        dir_fd = dir ? open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1;
+        if (dir_fd >= 0) {
+            (void)fsync(dir_fd);
+            (void)close(dir_fd);
+        }
+        free(dir);
+    }
+    if (!ok)
+        unlink(tmp);
+    free(tmp);
+    free(path);
+}
+
+static int state_parse_int(const char *text, int *value)
+{
+    char *end;
+    long parsed;
+
+    if (!text || !value)
+        return 0;
+    errno = 0;
+    parsed = strtol(text, &end, 10);
+    if (errno != 0 || end == text || parsed < INT_MIN || parsed > INT_MAX)
+        return 0;
+    while (*end && isspace((unsigned char)*end))
+        end++;
+    if (*end)
+        return 0;
+    *value = (int)parsed;
+    return 1;
 }
 
 static void state_read(UkBridge *b)
 {
-    char path[256], line[128];
+    char *path, line[128];
     FILE *f;
     int enabled = b->enabled;
     int method = b->inputMethod;
+    int parsed;
 
-    state_path(path, sizeof(path));
+    path = state_path();
+    if (!path)
+        return;
     f = fopen(path, "r");
+    free(path);
     if (!f)
         return;
 
     while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "enabled=", 8) == 0)
-            enabled = atoi(line + 8);
-        else if (strncmp(line, "method=", 7) == 0)
-            method = atoi(line + 7);
+        if (strncmp(line, "enabled=", 8) == 0 &&
+            state_parse_int(line + 8, &parsed) &&
+            (parsed == 0 || parsed == 1))
+            enabled = parsed;
+        else if (strncmp(line, "method=", 7) == 0 &&
+                 state_parse_int(line + 7, &parsed))
+            method = parsed;
     }
     fclose(f);
 
+    enabled = enabled ? 1 : 0;
+    if (method != UkTelex && method != UkVni && method != UkViqr &&
+        method != UkUsrIM)
+        method = b->inputMethod;
+    if (method == UkUsrIM && !b->user_keymap_loaded)
+        method = UkTelex;
+
+    /* Chot/reset am tiet cu truoc khi doi bat/tat hoac bo go. */
+    if (method != b->inputMethod || enabled != b->enabled)
+        uk_bridge_flush(b);
     if (method != b->inputMethod) {
         b->inputMethod = method;
         UnikeySetInputMethod((UkInputMethod)method);
     }
-    if (enabled != b->enabled) {
-        uk_bridge_flush(b);
+    if (enabled != b->enabled)
         b->enabled = enabled;
-    }
 }
 
 static void state_watch_init(UkBridge *b)
 {
-    char path[256], *slash;
+    char *path, *slash;
 
     b->inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (b->inotify_fd < 0)
         return;
 
     /* Theo doi THU MUC chu khong phai file: state duoc thay bang rename() nen
-       watch tren chinh file se mat hieu luc ngay sau lan ghi dau tien. */
-    state_path(path, sizeof(path));
+       watch tren chinh file se mat hieu luc sau lan ghi dau. */
+    path = state_path();
+    if (!path) {
+        close(b->inotify_fd);
+        b->inotify_fd = -1;
+        return;
+    }
     slash = strrchr(path, '/');
     if (slash)
         *slash = '\0';
 
     b->inotify_wd = inotify_add_watch(b->inotify_fd, path,
                                       IN_MOVED_TO | IN_CLOSE_WRITE);
+    free(path);
     if (b->inotify_wd < 0) {
         close(b->inotify_fd);
         b->inotify_fd = -1;
@@ -501,18 +615,23 @@ int uk_bridge_state_fd(UkBridge *b)
 
 int uk_bridge_state_dispatch(UkBridge *b)
 {
-    char ebuf[4096];
+    union {
+        struct inotify_event alignment;
+        char bytes[4096];
+    } ebuf;
     ssize_t n;
     int relevant = 0;
 
     if (b->inotify_fd < 0)
         return 0;
 
-    while ((n = read(b->inotify_fd, ebuf, sizeof(ebuf))) > 0) {
+    while ((n = read(b->inotify_fd, ebuf.bytes, sizeof(ebuf.bytes))) > 0) {
         ssize_t i = 0;
         while (i + (ssize_t)sizeof(struct inotify_event) <= n) {
-            struct inotify_event *ev = (struct inotify_event *)(ebuf + i);
-            if (ev->len > 0 && strcmp(ev->name, "state") == 0)
+            struct inotify_event *ev =
+                (struct inotify_event *)(ebuf.bytes + i);
+            if ((ev->mask & IN_Q_OVERFLOW) ||
+                (ev->len > 0 && strcmp(ev->name, "state") == 0))
                 relevant = 1;
             i += sizeof(struct inotify_event) + ev->len;
         }
@@ -527,8 +646,9 @@ int uk_bridge_state_dispatch(UkBridge *b)
        ghi truoc va nuot mat thay doi that su cua tien trinh khac. */
     {
         int old_enabled = b->enabled, old_im = b->inputMethod;
+
         state_read(b);
-        return (old_enabled != b->enabled || old_im != b->inputMethod);
+        return old_enabled != b->enabled || old_im != b->inputMethod;
     }
 }
 
@@ -540,15 +660,22 @@ void uk_bridge_load_config(UkBridge *b)
 {
     UkXimOpt opt;
     char *fname;
+    int user_keymap_loaded = 0;
 
     UkSetDefOptions(&opt);
-    UkTestDefConfFile();
+    if (!UkTestDefConfFile())
+        return;
     fname = UkGetDefConfFileName();   /* bo dem tinh trong ukopt.c, khong duoc free */
-    if (fname)
-        UkParseOptFile(fname, &opt);
+    if (!fname || !UkParseOptFile(fname, &opt)) {
+        free(opt.macroFile);
+        free(opt.usrKeyMapFile);
+        return;
+    }
 
     if (opt.usrKeyMapFile && *opt.usrKeyMapFile)
-        UnikeyLoadUserKeyMap(opt.usrKeyMapFile);
+        user_keymap_loaded = UnikeyLoadUserKeyMap(opt.usrKeyMapFile);
+    if (opt.inputMethod == UkUsrIM && !user_keymap_loaded)
+        opt.inputMethod = UkTelex;
     if (opt.macroFile && *opt.macroFile) {
         if (UnikeyLoadMacroTable(opt.macroFile))
             opt.uk.macroEnabled = 1;
@@ -556,6 +683,7 @@ void uk_bridge_load_config(UkBridge *b)
 
     UnikeySetOptions(&opt.uk);
     b->terminal_mode = opt.terminalMode;
+    b->user_keymap_loaded = user_keymap_loaded;
     b->enabled = opt.enabled;
     b->inputMethod = opt.inputMethod;
     UnikeySetInputMethod((UkInputMethod)opt.inputMethod);

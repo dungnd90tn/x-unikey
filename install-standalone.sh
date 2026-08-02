@@ -3,6 +3,7 @@
 #
 #   ./install-standalone.sh          cai
 #   ./install-standalone.sh remove   go
+#   ./install-standalone.sh cleanup-legacy  go XIM GUI cu con sot lai
 #
 # Phai chay bang sudo cho phan chep module vao thu muc he thong.
 # Phan cau hinh phien lam viec (~/.config) thi chay bang tai khoan thuong.
@@ -24,11 +25,16 @@ GTK4_SO="src/unikey-gtk4/.libs/libim-unikey.so"
 QT6_SO="src/unikey-qt/.libs/libunikeyplatforminputcontextplugin.so"
 
 IBUS_BIN="src/unikey-ibus/ibus-engine-unikey"
+IBUS_SETUP_BIN="src/unikey-ibus/ibus-setup-unikey"
+IBUS_SETUP_DESKTOP="src/unikey-ibus/ibus-setup-unikey.desktop"
 IBUS_XML="src/unikey-ibus/unikey.xml"
 IBUS_LIBEXEC="/usr/local/libexec"
 IBUS_COMPONENT="/usr/share/ibus/component"
+IBUS_APPLICATIONS="/usr/share/applications"
 
 ENVFILE="$REAL_HOME/.config/environment.d/unikey.conf"
+LEGACY_AUTOSTART="$REAL_HOME/.config/autostart/unikey.desktop"
+LEGACY_AUTOSTART_DISABLED="$REAL_HOME/.config/autostart-disabled/unikey.desktop"
 
 say() { printf '%s\n' "$*"; }
 
@@ -91,6 +97,13 @@ do_install() {
         say "Cai IBus engine:"
         install -Dm755 "$IBUS_BIN" "$IBUS_LIBEXEC/ibus-engine-unikey"
         say "  $IBUS_LIBEXEC/ibus-engine-unikey"
+        if [ -f "$IBUS_SETUP_BIN" ] && [ -f "$IBUS_SETUP_DESKTOP" ]; then
+            install -Dm755 "$IBUS_SETUP_BIN" "$IBUS_LIBEXEC/ibus-setup-unikey"
+            say "  $IBUS_LIBEXEC/ibus-setup-unikey"
+            install -Dm644 "$IBUS_SETUP_DESKTOP" \
+                "$IBUS_APPLICATIONS/ibus-setup-unikey.desktop"
+            say "  $IBUS_APPLICATIONS/ibus-setup-unikey.desktop"
+        fi
         install -Dm644 "$IBUS_XML" "$IBUS_COMPONENT/unikey.xml"
         say "  $IBUS_COMPONENT/unikey.xml"
         HAVE_IBUS=yes
@@ -141,6 +154,8 @@ do_remove() {
              "$GTK4_DIR/libim-unikey.so" \
              "$QT6_DIR/libunikeyplatforminputcontextplugin.so" \
              "$IBUS_LIBEXEC/ibus-engine-unikey" \
+             "$IBUS_LIBEXEC/ibus-setup-unikey" \
+             "$IBUS_APPLICATIONS/ibus-setup-unikey.desktop" \
              "$IBUS_COMPONENT/unikey.xml" ; do
         if [ -f "$f" ]; then
             rm -f "$f" && say "  xoa $f"
@@ -153,8 +168,96 @@ do_remove() {
     say "Xong. Dang xuat roi dang nhap lai."
 }
 
+# Ban XIM 1.0.4 cu cai hai binary nay va mot desktop autostart, tao cua so
+# "TX: UTF8". Tang XIM da bi go khoi source hien tai; don rieng no ma KHONG
+# xoa ~/.unikey vi IBus engine moi van dung options/state trong do.
+do_cleanup_legacy() {
+    legacy_gui=/usr/local/bin/unikey
+    legacy_xim=/usr/local/bin/ukxim
+    legacy_pids=
+    real_uid=
+
+    need_root
+
+    if [ -z "$REAL_USER" ] || [ "$REAL_USER" = root ] ||
+       [ -z "$REAL_HOME" ] || [ "$REAL_HOME" = / ]; then
+        say "Khong xac dinh duoc tai khoan desktop an toan; khong don legacy."
+        exit 1
+    fi
+    real_uid=$(id -u "$REAL_USER" 2>/dev/null || true)
+    if [ -z "$real_uid" ]; then
+        say "Khong xac dinh duoc UID desktop an toan; khong don legacy."
+        exit 1
+    fi
+
+    # Chi nhan dung hai binary XIM 1.0.4 cu, khong xoa file trung ten do admin
+    # tu cai cho muc dich khac.
+    if command -v strings >/dev/null 2>&1 &&
+       [ -f "$legacy_gui" ] &&
+       strings "$legacy_gui" | grep -Fqx 'Unikey XIM Simple GUI'; then
+        have_legacy_gui=yes
+    else
+        have_legacy_gui=no
+    fi
+    if command -v strings >/dev/null 2>&1 &&
+       [ -f "$legacy_xim" ] &&
+       strings "$legacy_xim" | grep -Fqx \
+           'Unikey XIM - Vietnamese input method for X Window. Version 1.0.4'; then
+        have_legacy_xim=yes
+    else
+        have_legacy_xim=no
+    fi
+
+    say "Dung XIM GUI cu cua nguoi dung $REAL_USER:"
+    if command -v pgrep >/dev/null 2>&1; then
+        for name in unikey ukxim; do
+            for pid in $(pgrep -u "$REAL_USER" -x "$name" 2>/dev/null); do
+                exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)
+                if { [ "$exe" = "$legacy_gui" ] && [ "$have_legacy_gui" = yes ]; } ||
+                   { [ "$exe" = "$legacy_xim" ] && [ "$have_legacy_xim" = yes ]; }; then
+                    kill -TERM "$pid" 2>/dev/null || true
+                    legacy_pids="$legacy_pids $pid:$exe"
+                fi
+            done
+        done
+        if [ -n "$legacy_pids" ]; then
+            sleep 1
+            for process in $legacy_pids; do
+                pid=${process%%:*}
+                expected_exe=${process#*:}
+                # TERM co the da lam PID bien mat va kernel tai su dung no.
+                # Truoc KILL phai xac minh lai ca executable va UID.
+                exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)
+                proc_uid=$(stat -c '%u' "/proc/$pid" 2>/dev/null || true)
+                if [ "$exe" = "$expected_exe" ] && [ "$proc_uid" = "$real_uid" ]; then
+                    kill -KILL "$pid" 2>/dev/null || true
+                fi
+            done
+        fi
+    fi
+
+    for desktop_file in "$LEGACY_AUTOSTART" "$LEGACY_AUTOSTART_DISABLED"; do
+        if [ -f "$desktop_file" ] &&
+           grep -Eq '^Exec=/usr/local/bin/unikey([[:space:]].*)?$' "$desktop_file"; then
+            rm -f "$desktop_file"
+            say "  xoa $desktop_file"
+        fi
+    done
+    if [ "$have_legacy_gui" = yes ]; then
+        rm -f "$legacy_gui"
+        say "  xoa $legacy_gui"
+    fi
+    if [ "$have_legacy_xim" = yes ]; then
+        rm -f "$legacy_xim"
+        say "  xoa $legacy_xim"
+    fi
+
+    say "Xong. Giu nguyen $REAL_HOME/.unikey cho IBus engine moi."
+}
+
 case "$ACTION" in
     install) do_install ;;
     remove|uninstall) do_remove ;;
-    *) say "Dung: $0 [install|remove]" ; exit 1 ;;
+    cleanup-legacy|legacy-cleanup) do_cleanup_legacy ;;
+    *) say "Dung: $0 [install|remove|cleanup-legacy]" ; exit 1 ;;
 esac

@@ -90,12 +90,18 @@ typedef struct _UkIBusEngineClass UkIBusEngineClass;
 struct _UkIBusEngine {
     IBusEngine parent;
     UkBridge  *bridge;
+    IBusPropList *properties;
+    IBusProperty *prop_telex;
+    IBusProperty *prop_vni;
+    IBusProperty *prop_viqr;
     guint      state_source;
     guint      capabilities;
     guint      purpose;
     guint      hints;
     gboolean   preedit_visible;
     gboolean   capabilities_known;
+    gboolean   saw_url;
+    gboolean   saw_sentence_entry;
     gboolean   focused;
     gboolean   mode_applied;
     UkIBusMode mode;
@@ -160,6 +166,11 @@ static const UkBridgeVTable BridgeVTable = {
     on_erase_before_cursor
 };
 
+static void uk_ibus_engine_update_mode(UkIBusEngine *self,
+                                        const char *reason);
+static void uk_ibus_engine_sync_properties(UkIBusEngine *self,
+                                           gboolean publish);
+
 /*--------------------------------------------------------------------
   Trang thai bat/tat dung chung voi cac module GTK/Qt (~/.unikey/state)
  --------------------------------------------------------------------*/
@@ -167,8 +178,173 @@ static gboolean on_state_changed(gint fd, GIOCondition cond, gpointer data)
 {
     UkIBusEngine *self = (UkIBusEngine *)data;
     (void)fd; (void)cond;
-    uk_bridge_state_dispatch(self->bridge);
+    if (uk_bridge_state_dispatch(self->bridge)) {
+        uk_ibus_engine_update_mode(self, "config-state");
+        uk_ibus_engine_sync_properties(self, self->focused);
+    }
     return G_SOURCE_CONTINUE;
+}
+
+/*--------------------------------------------------------------------
+  Menu thuoc tinh IBus.
+
+  Day khong phai cua so trang thai nhu XIM cu. Panel chi hien menu khi engine
+  dang duoc chon; cua so setup chi khoi dong khi nguoi dung bam "Cai dat...".
+ --------------------------------------------------------------------*/
+static IBusProperty *uk_ibus_property_new(const char *key,
+                                          IBusPropType type,
+                                          const char *label,
+                                          const char *tooltip,
+                                          IBusPropState state,
+                                          IBusPropList *children)
+{
+    IBusText *label_text = ibus_text_new_from_string(label);
+    IBusText *tooltip_text = ibus_text_new_from_string(tooltip);
+    IBusProperty *prop;
+
+    g_object_ref_sink(label_text);
+    g_object_ref_sink(tooltip_text);
+    prop = ibus_property_new(key, type, label_text, NULL, tooltip_text,
+                             TRUE, TRUE, state, children);
+    g_object_ref_sink(prop);
+    g_object_unref(label_text);
+    g_object_unref(tooltip_text);
+    return prop;
+}
+
+static void uk_ibus_engine_build_properties(UkIBusEngine *self)
+{
+    IBusPropList *methods = ibus_prop_list_new();
+    IBusProperty *menu;
+#ifdef HAVE_UNIKEY_SETUP
+    IBusProperty *setup;
+#endif
+
+    g_object_ref_sink(methods);
+    self->properties = ibus_prop_list_new();
+    g_object_ref_sink(self->properties);
+
+    self->prop_telex = uk_ibus_property_new(
+        "InputMethod.Telex", PROP_TYPE_RADIO, "Telex",
+        "Chon kieu go Telex", PROP_STATE_UNCHECKED, NULL);
+    self->prop_vni = uk_ibus_property_new(
+        "InputMethod.Vni", PROP_TYPE_RADIO, "VNI",
+        "Chon kieu go VNI", PROP_STATE_UNCHECKED, NULL);
+    self->prop_viqr = uk_ibus_property_new(
+        "InputMethod.Viqr", PROP_TYPE_RADIO, "VIQR",
+        "Chon kieu go VIQR", PROP_STATE_UNCHECKED, NULL);
+    ibus_prop_list_append(methods, self->prop_telex);
+    ibus_prop_list_append(methods, self->prop_vni);
+    ibus_prop_list_append(methods, self->prop_viqr);
+
+    menu = uk_ibus_property_new(
+        "InputMethod", PROP_TYPE_MENU, "Kiểu gõ",
+        "Chọn kiểu gõ tiếng Việt", PROP_STATE_UNCHECKED, methods);
+    ibus_prop_list_append(self->properties, menu);
+    g_object_unref(menu);
+    g_object_unref(methods);
+
+#ifdef HAVE_UNIKEY_SETUP
+    setup = uk_ibus_property_new(
+        "Setup", PROP_TYPE_NORMAL, "Cài đặt…",
+        "Mở cấu hình x-unikey", PROP_STATE_UNCHECKED, NULL);
+    ibus_property_set_icon(setup, "preferences-system");
+    ibus_prop_list_append(self->properties, setup);
+    g_object_unref(setup);
+#endif
+
+    uk_ibus_engine_sync_properties(self, FALSE);
+}
+
+static void uk_ibus_engine_sync_properties(UkIBusEngine *self,
+                                           gboolean publish)
+{
+    int method;
+
+    if (!self->properties)
+        return;
+    method = uk_bridge_get_input_method(self->bridge);
+    ibus_property_set_state(self->prop_telex,
+        method == UkTelex ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED);
+    ibus_property_set_state(self->prop_vni,
+        method == UkVni ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED);
+    ibus_property_set_state(self->prop_viqr,
+        method == UkViqr ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED);
+
+    if (publish) {
+        ibus_engine_update_property(IBUS_ENGINE(self), self->prop_telex);
+        ibus_engine_update_property(IBUS_ENGINE(self), self->prop_vni);
+        ibus_engine_update_property(IBUS_ENGINE(self), self->prop_viqr);
+    }
+}
+
+#ifdef HAVE_UNIKEY_SETUP
+static void uk_ibus_engine_open_setup(UkIBusEngine *self)
+{
+    gchar *engine_path;
+    gchar *engine_dir;
+    gchar *parent_dir;
+    gchar *setup_path;
+    gchar *argv[2];
+    GError *error = NULL;
+
+    (void)self;
+    engine_path = g_file_read_link("/proc/self/exe", &error);
+    if (!engine_path) {
+        uk_log("khong tim duoc executable de mo setup: %s",
+               error ? error->message : "unknown error");
+        g_clear_error(&error);
+        return;
+    }
+    engine_dir = g_path_get_dirname(engine_path);
+    setup_path = g_build_filename(engine_dir, "ibus-setup-unikey", NULL);
+    /* Ban hien tai dat hai binary cung thu muc. Fallback thu thu muc cha de
+       van mo duoc setup cua cac goi/ban cai thu cong theo layout cu. */
+    if (!g_file_test(setup_path, G_FILE_TEST_IS_EXECUTABLE)) {
+        g_free(setup_path);
+        parent_dir = g_path_get_dirname(engine_dir);
+        setup_path = g_build_filename(parent_dir, "ibus-setup-unikey", NULL);
+        g_free(parent_dir);
+    }
+    argv[0] = setup_path;
+    argv[1] = NULL;
+    if (!g_spawn_async(NULL, argv, NULL, 0, NULL, NULL, NULL, &error)) {
+        uk_log("khong mo duoc %s: %s", setup_path,
+               error ? error->message : "unknown error");
+        g_clear_error(&error);
+    }
+    g_free(setup_path);
+    g_free(engine_dir);
+    g_free(engine_path);
+}
+#endif
+
+static void uk_ibus_engine_property_activate(IBusEngine *engine,
+                                             const gchar *prop_name,
+                                             guint prop_state)
+{
+    UkIBusEngine *self = (UkIBusEngine *)engine;
+
+    (void)prop_state;
+    if (strcmp(prop_name, "InputMethod.Telex") == 0)
+        uk_bridge_set_input_method(self->bridge, UkTelex);
+    else if (strcmp(prop_name, "InputMethod.Vni") == 0)
+        uk_bridge_set_input_method(self->bridge, UkVni);
+    else if (strcmp(prop_name, "InputMethod.Viqr") == 0)
+        uk_bridge_set_input_method(self->bridge, UkViqr);
+#ifdef HAVE_UNIKEY_SETUP
+    else if (strcmp(prop_name, "Setup") == 0) {
+        uk_ibus_engine_open_setup(self);
+        return;
+    }
+#endif
+    else {
+        IBusEngineClass *parent = IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class);
+        if (parent->property_activate)
+            parent->property_activate(engine, prop_name, prop_state);
+        return;
+    }
+    uk_ibus_engine_sync_properties(self, TRUE);
 }
 
 /*--------------------------------------------------------------------
@@ -197,8 +373,13 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
     ki.super    = (modifiers & IBUS_SUPER_MASK) ? 1 : 0;
     ki.is_press = (modifiers & IBUS_RELEASE_MASK) ? 0 : 1;
 
-    if (uk_bridge_apply_action(self->bridge, uk_keys_shortcut(&ki)))
+    if (uk_bridge_apply_action(self->bridge, uk_keys_shortcut(&ki))) {
+        /* Shortcut doi kieu go cap nhat bridge truoc khi inotify cua chinh
+           tien trinh nay quay lai, nen dispatch co the thay "khong doi".
+           Publish radio menu ngay tai nguon de panel khong hien stale. */
+        uk_ibus_engine_sync_properties(self, self->focused);
         return TRUE;
+    }
 
     if (!ki.is_press)
         return FALSE;
@@ -239,8 +420,11 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
   Capability SURROUNDING_TEXT khong du de chon DIRECT: VTE co capability gia
   trong luc khoi tao, con VS Code/xterm.js co textarea surrounding that nhung
   no khong phai editable buffer -- delete/commit duoc bien thanh byte cua PTY.
-  Vi vay IBus dung PREEDIT trong suot cho moi context khong bi mat, tru terminal
-  khai purpose dung thi van ton trong TerminalMode.
+  Vi vay IBus dung PREEDIT trong suot cho van ban tu do. Purpose URL duoc vao
+  DIRECT sau handshake. Firefox/GTK lai gui thanh dia chi mozAwesomebar thanh
+  FREE_FORM; fingerprint UPPERCASE_SENTENCES cua context do duoc latch cung
+  focus va cung phai qua handshake. Terminal khai purpose dung van ton trong
+  TerminalMode truoc moi rule thanh dia chi.
  --------------------------------------------------------------------*/
 static const char *uk_ibus_mode_name(UkIBusMode mode)
 {
@@ -256,6 +440,7 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
 {
     gboolean is_secret;
     gboolean is_terminal;
+    gboolean is_direct_entry;
     gboolean can_surround;
     gboolean fallback_preedit;
     UkIBusMode old_mode;
@@ -268,12 +453,13 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
         is_secret = TRUE;
 #endif
     is_terminal = self->purpose == IBUS_INPUT_PURPOSE_TERMINAL;
+    is_direct_entry = self->saw_url || self->saw_sentence_entry;
     can_surround = (self->capabilities & IBUS_CAP_SURROUNDING_TEXT) != 0;
     fallback_preedit =
         uk_bridge_get_terminal_mode(self->bridge) == UkTerminalPreedit;
 
     old_mode = self->mode;
-    new_mode = uk_ibus_policy_choose(is_secret, is_terminal,
+    new_mode = uk_ibus_policy_choose(is_secret, is_terminal, is_direct_entry,
                                      self->capabilities_known, can_surround,
                                      fallback_preedit);
     self->mode = new_mode;
@@ -290,10 +476,12 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     }
 
     uk_log("engine=%p reason=%s focus=%s caps=%s0x%x purpose=%u hints=0x%x "
-           "surrounding=%s -> %s%s",
+           "url=%s sentence-entry=%s surrounding=%s -> %s%s",
            (void *)self, reason, self->focused ? "yes" : "no",
            self->capabilities_known ? "" : "?", self->capabilities,
-           self->purpose, self->hints, can_surround ? "yes" : "no",
+           self->purpose, self->hints, self->saw_url ? "yes" : "no",
+           self->saw_sentence_entry ? "yes" : "no",
+           can_surround ? "yes" : "no",
            uk_ibus_mode_name(new_mode), self->focused ? "" : " (deferred)");
 }
 
@@ -307,10 +495,14 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     self->purpose = IBUS_INPUT_PURPOSE_FREE_FORM;
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
+    self->saw_url = FALSE;
+    self->saw_sentence_entry = FALSE;
     self->focused = TRUE;
     self->mode_applied = FALSE;
     uk_bridge_reset(self->bridge);
     uk_ibus_engine_update_mode(self, "focus-in");
+    ibus_engine_register_properties(engine, self->properties);
+    uk_ibus_engine_sync_properties(self, TRUE);
 }
 
 static void uk_ibus_engine_focus_out(IBusEngine *engine)
@@ -320,6 +512,8 @@ static void uk_ibus_engine_focus_out(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    self->saw_url = FALSE;
+    self->saw_sentence_entry = FALSE;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     uk_log("engine=%p focus-out", (void *)self);
@@ -354,6 +548,14 @@ static void uk_ibus_engine_set_content_type(IBusEngine *engine,
 
     self->purpose = purpose;
     self->hints = hints;
+    self->saw_url = uk_ibus_policy_update_url_latch(
+        self->saw_url,
+        purpose == IBUS_INPUT_PURPOSE_URL,
+        purpose == IBUS_INPUT_PURPOSE_FREE_FORM);
+    self->saw_sentence_entry = uk_ibus_policy_update_sentence_latch(
+        self->saw_sentence_entry,
+        purpose == IBUS_INPUT_PURPOSE_FREE_FORM,
+        (hints & IBUS_INPUT_HINT_UPPERCASE_SENTENCES) != 0);
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->set_content_type(engine,
                                                                     purpose, hints);
     uk_ibus_engine_update_mode(self, "content-type");
@@ -378,6 +580,8 @@ static void uk_ibus_engine_disable(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    self->saw_url = FALSE;
+    self->saw_sentence_entry = FALSE;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->disable(engine);
@@ -389,15 +593,22 @@ static void uk_ibus_engine_init(UkIBusEngine *self)
     int fd;
 
     self->preedit_visible = FALSE;
+    self->properties = NULL;
+    self->prop_telex = NULL;
+    self->prop_vni = NULL;
+    self->prop_viqr = NULL;
     self->state_source = 0;
     self->capabilities = 0;
     self->purpose = IBUS_INPUT_PURPOSE_FREE_FORM;
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
+    self->saw_url = FALSE;
+    self->saw_sentence_entry = FALSE;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     self->mode = UK_IBUS_MODE_PREEDIT;
     self->bridge = uk_bridge_new(&BridgeVTable, self);
+    uk_ibus_engine_build_properties(self);
 
     /* Mutter gui CommitText kem lenh ket thuc preedit trong cung transaction.
        Commit truoc roi moi phat empty update tranh xterm.js finalize preedit cu
@@ -425,6 +636,16 @@ static void uk_ibus_engine_destroy(IBusObject *object)
         uk_bridge_free(self->bridge);
         self->bridge = NULL;
     }
+    if (self->properties) {
+        g_object_unref(self->prop_telex);
+        g_object_unref(self->prop_vni);
+        g_object_unref(self->prop_viqr);
+        g_object_unref(self->properties);
+        self->properties = NULL;
+        self->prop_telex = NULL;
+        self->prop_vni = NULL;
+        self->prop_viqr = NULL;
+    }
     IBUS_OBJECT_CLASS(uk_ibus_engine_parent_class)->destroy(object);
 }
 
@@ -443,6 +664,7 @@ static void uk_ibus_engine_class_init(UkIBusEngineClass *klass)
     engine->disable           = uk_ibus_engine_disable;
     engine->set_capabilities  = uk_ibus_engine_set_capabilities;
     engine->set_content_type  = uk_ibus_engine_set_content_type;
+    engine->property_activate = uk_ibus_engine_property_activate;
 }
 
 /*--------------------------------------------------------------------

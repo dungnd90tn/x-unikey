@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=x-unikey Preferences
+Name[vi]=Cấu hình x-unikey
+Comment=Configure the x-unikey Vietnamese input method
+Comment[vi]=Cấu hình bộ gõ tiếng Việt x-unikey
+Exec=@LIBEXECDIR@/ibus-setup-unikey
+Icon=input-keyboard
+NoDisplay=true
+StartupNotify=true
+Categories=Settings;

@@ -22,6 +22,7 @@
             <description>Bo go tieng Viet UniKey: Telex, VNI, VIQR</description>
             <rank>99</rank>
             <symbol>VN</symbol>
+            @SETUP_ELEMENT@
         </engine>
     </engines>
 </component>

@@ -24,6 +24,8 @@
 #ifndef __OPT_PARSE_H
 #define __OPT_PARSE_H
 
+#include <stddef.h>
+
 typedef struct _OptLookup 
 {
   char *name;
@@ -40,7 +42,7 @@ typedef struct _OptItem
 {
   char *name;
   char *comment;
-  int offset;
+  size_t offset;
   int type;
   OptMap *lookup;
 } OptItem;

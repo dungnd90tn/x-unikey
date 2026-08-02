@@ -26,6 +26,7 @@
 using namespace std;
 
 #include <ctype.h>
+#include <string.h>
 #include "usrkeymap.h"
 
 int getLabelIndex(int action);
@@ -152,7 +153,7 @@ DllExport int UkLoadKeyOrderMap(const char *fileName, UkKeyMapPair *pMap, int *p
     size_t len;
     int i, bufSize, lineCount;
     unsigned char c;
-    int mapCount;
+    int mapCount, valid;
     int keyMap[256];
 
     f = fopen(fileName, "r");
@@ -167,6 +168,7 @@ DllExport int UkLoadKeyOrderMap(const char *fileName, UkKeyMapPair *pMap, int *p
 
     lineCount = 0;
     mapCount = 0;
+    valid = 1;
     while (!feof(f)) {
         if (fgets((char *)buf, bufSize, f) == 0)
             break;
@@ -177,13 +179,21 @@ DllExport int UkLoadKeyOrderMap(const char *fileName, UkKeyMapPair *pMap, int *p
 
         if (buf[len-1] == '\n')
             buf[len-1] = 0;
+        char *content = buf;
+        while (*content && isspace((unsigned char)*content))
+            content++;
+        if (*content == 0 || *content == OPT_COMMENT_CHAR)
+            continue;
+
         if (parseNameValue(buf, (char **)&name, (char **)&value)) {
             if (strlen(name) == 1) {
                 for (i=0; i < UkEvLabelCount; i++) {
                     if (strcmp(UkEvLabelList[i].label, value) == 0) {
                         c = (unsigned char)name[0];
                         if (keyMap[c] != vneNormal) {
-                            //already assigned, don't accept this map
+                            cerr << "Error in user key layout, line "
+                                 << lineCount << ": key already assigned" << endl;
+                            valid = 0;
                             break;
                         }
                         //cout << "key: " << c << " value: " << UkEvLabelList[i].ev << endl; //DEBUG
@@ -202,20 +212,30 @@ DllExport int UkLoadKeyOrderMap(const char *fileName, UkKeyMapPair *pMap, int *p
                 }
                 if (i == UkEvLabelCount) {
                     cerr << "Error in user key layout, line " << lineCount << ": command not found" << endl;
+                    valid = 0;
                 }
             }
             else {
                 cerr << "Error in user key layout, line " << lineCount 
                      << ": key name is not a single character" << endl;	
+                valid = 0;
             }
         }
+        else {
+            cerr << "Error in user key layout, line " << lineCount
+                 << ": expected key = command" << endl;
+            valid = 0;
+        }
     }
+    if (ferror(f))
+        valid = 0;
     delete [] buf;
-    fclose(f);
+    if (fclose(f) != 0)
+        valid = 0;
 
     *pMapCount = mapCount;
 
-    return 1;
+    return valid && mapCount > 0;
 }
 
 //-------------------------------------------

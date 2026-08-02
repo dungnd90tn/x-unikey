@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "vnconv.h"
 #include "optparse.h"
 #include "ukopt.h"
@@ -160,28 +161,84 @@ int UkParseOptFile(const char *fileName, UkXimOpt *options)
 //----------------------------------------------------
 int UkWriteOptFile(const char *fileName, UkXimOpt *options)
 {
+  char *backup;
+  size_t backupLen;
+  struct stat st;
+
+  if (!fileName || !*fileName || !options)
+    return 0;
+
+  /* Lan ghi canonical dau tien giu nguyen file cu, ke ca cac khoa legacy
+     ma phien ban nay chua biet. Khong bao gio ghi de ban sao da co. */
+  if (lstat(fileName, &st) == 0) {
+    if (!S_ISREG(st.st_mode))
+      return 0;
+    backupLen = strlen(fileName) + sizeof(".bak");
+    backup = (char *)malloc(backupLen);
+    if (!backup)
+      return 0;
+    snprintf(backup, backupLen, "%s.bak", fileName);
+    if (lstat(backup, &st) != 0) {
+      if (errno != ENOENT || link(fileName, backup) != 0) {
+        free(backup);
+        return 0;
+      }
+    }
+    free(backup);
+  }
+  else if (errno != ENOENT)
+    return 0;
+
   return ParseWriteOptFile(fileName, ConfigHeaderCmt, options,
 		       UkXimOptList, sizeof(UkXimOptList)/sizeof(OptItem));
 }
 
-//------------------------------------------------------
-char *UkGetDefConfFileName()
+//----------------------------------------------------
+// Write then rename so running frontends never parse a half-written file.
+//----------------------------------------------------
+int UkWriteOptFileAtomic(const char *fileName, UkXimOpt *options)
 {
-  static char buf[128];
-  strcpy(buf, getenv("HOME"));
-  //  strcat(buf, "/.unikeyrc");
-  strcat(buf, "/.unikey/options");
-  return buf;
+  return UkWriteOptFile(fileName, options);
 }
 
 //------------------------------------------------------
-int createDefConfDir()
+char *UkGetDefConfFileName(void)
 {
+  static char *name = NULL;
+  char *expanded = NULL;
+
+  if (!ParseExpandFileName("~/.unikey/options", &expanded))
+    return NULL;
+  if (name && strcmp(name, expanded) == 0) {
+    free(expanded);
+    return name;
+  }
+  free(name);
+  name = expanded;
+  return name;
+}
+
+//------------------------------------------------------
+static int createDefConfDir(void)
+{
+  const char *fileName;
+  char *name, *slash;
   int ret;
-  char name[128];
-  strcpy(name, getenv("HOME"));
-  strcat(name, "/.unikey");
-  ret = mkdir(name, S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+
+  fileName = UkGetDefConfFileName();
+  if (!fileName)
+    return 0;
+  name = strdup(fileName);
+  if (!name)
+    return 0;
+  slash = strrchr(name, '/');
+  if (!slash) {
+    free(name);
+    return 0;
+  }
+  *slash = 0;
+  ret = mkdir(name, S_IRWXU);
+  free(name);
   return (ret == 0 || errno == EEXIST);
 }
 
@@ -205,18 +262,29 @@ void UkSetDefOptions(UkXimOpt *options)
 //------------------------------------------------------
 // test if default config file and directory exist, if not then create them
 //------------------------------------------------------
-void UkTestDefConfFile()
+int UkTestDefConfFile(void)
 {
   FILE *f;
   char *fname;
-  createDefConfDir();
+  struct stat st;
+
+  if (!createDefConfDir())
+    return 0;
   fname = UkGetDefConfFileName();
-  f = fopen(fname, "r");
-  if (!f) {
+  if (!fname)
+    return 0;
+  if (lstat(fname, &st) != 0) {
+    if (errno != ENOENT)
+      return 0;
     UkXimOpt opt;
     UkSetDefOptions(&opt);
-    UkWriteOptFile(fname, &opt);
+    return UkWriteOptFileAtomic(fname, &opt);
   }
-  else
-    fclose(f);
+  if (!S_ISREG(st.st_mode))
+    return 0;
+
+  f = fopen(fname, "r");
+  if (!f)
+    return 0;
+  return fclose(f) == 0;
 }
