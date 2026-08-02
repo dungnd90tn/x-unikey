@@ -45,6 +45,16 @@ Input methods are *tables* (`UkKeyMapping[]` in [inputproc.h](src/ukengine/input
 options are a table too (`OptItem[]` with struct byte offsets), so adding either is a mechanical
 edit, not new code.
 
+`ibus-setup-unikey` is a non-resident GTK3 preferences dialog. The IBus XML `<setup>` hook,
+and panel property open that same executable; it is not an autostart/status UI and does not need
+an application `.desktop` launcher. It writes the shared `~/.unikey/options` atomically and
+preserves the first pre-rewrite file as `options.bak`. Only `state` (enabled/input method) reloads
+live: do not watch/reload all options from every `UkBridge`, because `ukinterface` has one
+process-global engine and an unfocused context could reset a focused context's composition.
+`UkXimOpt` scalar fields and `BoolOpt`/`LookupOpt` accesses must remain `int`; writing them as
+`long` corrupts adjacent fields on 64-bit systems. Modern frontends must keep output fixed to
+UTF-8, and global DIRECT/PREEDIT is deliberately not configurable.
+
 ### DIRECT vs PREEDIT — read this before touching the commit path
 
 The IBus engine uses the policy in
@@ -53,6 +63,9 @@ The IBus engine uses the policy in
 - password/PIN/hidden text → OFF;
 - `IBUS_INPUT_PURPOSE_TERMINAL` → `TerminalMode` (`Off` by default or transparent `Preedit`),
   even if the caps contain `IBUS_CAP_SURROUNDING_TEXT`;
+- a latched `IBUS_INPUT_PURPOSE_URL` → DIRECT only after surrounding text is known and present,
+  otherwise OFF. Chromium may reset purpose to FREE_FORM before caps settle, so latch URL until
+  focus-out; this keeps omnibox search conversion without composition/predict;
 - every other IBus context → transparent PREEDIT, regardless of capabilities.
 
 An IBus surrounding-text capability does not prove that it represents the user's editable
@@ -182,3 +195,8 @@ front-end directory exists solely to make libtool link with `g++` against the C+
 remove them. The engine, `vnconv` and `byteio` are shared verbatim with the Windows UniKey build,
 which is why `#if defined(WIN32)` blocks, `DllInterface` macros and `stdafx.h` stubs are still
 there — keep them.
+
+Old source/manual installs may leave `/usr/local/bin/unikey`, `/usr/local/bin/ukxim`, and
+`~/.config/autostart/unikey.desktop`; that pair creates the obsolete `TX: UTF8` XIM status window
+and is unrelated to the IBus engine. `install-standalone.sh cleanup-legacy` removes exactly those
+artifacts while deliberately preserving `~/.unikey`, which the modern frontends still share.

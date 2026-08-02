@@ -8,9 +8,10 @@
 # goi ma khong can chay bang root.
 
 set -e
+umask 022
 
 VERSION="${VERSION:-1.0.4}"
-REVISION="${REVISION:-1}"
+REVISION="${REVISION:-6}"
 ARCH="$(dpkg --print-architecture)"
 PKG="x-unikey"
 OUT="release"
@@ -24,6 +25,7 @@ GTK4_BINVER="$(pkg-config gtk4 --variable=gtk_binary_version 2>/dev/null || echo
 # nguoi dung tu cai bang tay, con dpkg quan ly /usr.
 ENGINE_DIR="/usr/libexec/ibus-unikey"
 COMPONENT_DIR="/usr/share/ibus/component"
+APPLICATIONS_DIR="/usr/share/applications"
 GTK3_DIR="/usr/lib/$MULTIARCH/gtk-3.0/$GTK3_BINVER/immodules"
 GTK4_DIR="/usr/lib/$MULTIARCH/gtk-4.0/$GTK4_BINVER/immodules"
 QT6_DIR="/usr/lib/$MULTIARCH/qt6/plugins/platforminputcontexts"
@@ -34,11 +36,12 @@ say() { printf '%s\n' "$*"; }
 # Kiem tra da build chua
 #---------------------------------------------------------------
 ENGINE_BIN="src/unikey-ibus/ibus-engine-unikey"
+SETUP_BIN="src/unikey-ibus/ibus-setup-unikey"
 GTK3_SO="src/unikey-gtk3/.libs/im-unikey.so"
 GTK4_SO="src/unikey-gtk4/.libs/libim-unikey.so"
 QT6_SO="src/unikey-qt/.libs/libunikeyplatforminputcontextplugin.so"
 
-for f in "$ENGINE_BIN" "$GTK3_SO" "$GTK4_SO" "$QT6_SO"; do
+for f in "$ENGINE_BIN" "$SETUP_BIN" "$GTK3_SO" "$GTK4_SO" "$QT6_SO"; do
     if [ ! -f "$f" ]; then
         say "Chua build: thieu $f"
         say "Chay truoc:  ./configure && make"
@@ -55,6 +58,7 @@ mkdir -p "$OUT"
 say "Dung cay thu muc goi..."
 
 install -Dm755 "$ENGINE_BIN" "$STAGE$ENGINE_DIR/ibus-engine-unikey"
+install -Dm755 "$SETUP_BIN"  "$STAGE$ENGINE_DIR/ibus-setup-unikey"
 install -Dm755 "$GTK3_SO"    "$STAGE$GTK3_DIR/im-unikey.so"
 install -Dm755 "$GTK4_SO"    "$STAGE$GTK4_DIR/libim-unikey.so"
 install -Dm755 "$QT6_SO"     "$STAGE$QT6_DIR/libunikeyplatforminputcontextplugin.so"
@@ -62,8 +66,17 @@ install -Dm755 "$QT6_SO"     "$STAGE$QT6_DIR/libunikeyplatforminputcontextplugin
 # Component XML: duong dan <exec> phai tro dung cho engine trong goi
 mkdir -p "$STAGE$COMPONENT_DIR"
 sed -e "s|@LIBEXECDIR@|$ENGINE_DIR|g" -e "s|@VERSION@|$VERSION|g" \
+    -e "s|@SETUP_ELEMENT@|<setup>$ENGINE_DIR/ibus-setup-unikey</setup>|g" \
     src/unikey-ibus/unikey.xml.in > "$STAGE$COMPONENT_DIR/unikey.xml"
 chmod 644 "$STAGE$COMPONENT_DIR/unikey.xml"
+
+# Launcher an de GNOME Settings mo Preferences cua input source. Day khong
+# phai autostart va khong tao cua so/tray icon thuong truc.
+mkdir -p "$STAGE$APPLICATIONS_DIR"
+sed -e "s|@LIBEXECDIR@|$ENGINE_DIR|g" \
+    src/unikey-ibus/ibus-setup-unikey.desktop.in \
+    > "$STAGE$APPLICATIONS_DIR/ibus-setup-unikey.desktop"
+chmod 644 "$STAGE$APPLICATIONS_DIR/ibus-setup-unikey.desktop"
 
 # Tai lieu
 install -Dm644 README            "$STAGE/usr/share/doc/$PKG/README"
@@ -92,6 +105,7 @@ if command -v dpkg-shlibdeps >/dev/null 2>&1; then
     fi
     if dpkg-shlibdeps -O --ignore-missing-info \
         "$STAGE$ENGINE_DIR/ibus-engine-unikey" \
+        "$STAGE$ENGINE_DIR/ibus-setup-unikey" \
         "$STAGE$GTK3_DIR/im-unikey.so" \
         "$STAGE$GTK4_DIR/libim-unikey.so" \
         "$STAGE$QT6_DIR/libunikeyplatforminputcontextplugin.so" \
@@ -108,7 +122,7 @@ if [ -z "$DEPS" ]; then
     DEPS="libc6, libglib2.0-0t64 | libglib2.0-0, libibus-1.0-5, libgtk-3-0t64 | libgtk-3-0, libgtk-4-1, libqt6gui6, libx11-6, libstdc++6"
 fi
 
-INSTALLED_SIZE="$(du -sk "$STAGE" | cut -f1)"
+INSTALLED_SIZE="$(du -sk --apparent-size "$STAGE" | cut -f1)"
 
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: $PKG
@@ -128,8 +142,9 @@ Description: Bo go tieng Viet UniKey cho X11 va Wayland
   * IBus engine  - hien trong Settings -> Keyboard -> Input Sources,
                    go duoc trong ca VSCode va cac ung dung Electron/GTK4
                    chay tren Wayland
+  * Cua so setup - Telex/VNI/VIQR, terminal mode, dat dau va spell-check
   * Module GTK3 va GTK4
-  * Plugin Qt5/Qt6
+  * Plugin Qt6
  .
  Ho tro cac kieu go Telex, VNI, VIQR va kieu go tu dinh nghia.
 EOF
@@ -161,6 +176,7 @@ case "$1" in
         echo "  2. Settings -> Keyboard -> Input Sources -> +  -> Vietnamese"
         echo "     -> \"Vietnamese (UniKey)\""
         echo "  3. Chuyen bo go bang Super-Space"
+        echo "  4. Menu VN -> Cai dat... de chon kieu go va cac tuy chon"
         echo ""
         ;;
 esac

@@ -147,14 +147,42 @@ Hoặc cài tay bằng `sudo ./install-standalone.sh` (vào `/usr/local`, tiện
 
 Cả hai đều chép 4 front-end vào thư mục hệ thống và cập nhật cache immodule của GTK3.
 
+## 7.1. Cấu hình
+
+IBus đăng ký menu kiểu gõ và mục **Cài đặt…**. Cửa sổ GTK3 setup là chương trình
+chạy theo yêu cầu, không phải status window/autostart của XIM cũ. Nó cấu hình
+Telex/VNI/VIQR/User, Terminal Off/Preedit, FreeStyle, ModernStyle, spell-check,
+tự khôi phục từ ngoại, macro và keymap riêng.
+
+Mọi frontend tiếp tục dùng chung `~/.unikey/options`; setup ghi nguyên tử, giữ
+file cũ lần đầu ở `options.bak`. Kiểu gõ/trạng thái được đồng bộ ngay qua
+`~/.unikey/state`; các tùy chọn tĩnh có hiệu lực sau `ibus restart` hoặc khi ứng
+dụng dùng module GTK/Qt được mở lại. Không reload toàn bộ options giữa lúc đang
+composition vì lõi UniKey là singleton theo tiến trình. Bảng mã chỉ đọc là Unicode
+UTF-8. DIRECT/PREEDIT/OFF vẫn là policy tự động theo từng ô nhập, không được biến
+thành công tắc toàn cục vì sẽ làm tái phát lỗi trình duyệt/terminal.
+
 ## 8. Hai chế độ commit — xem README mục 6
 
-Engine tự chọn theo `IBUS_CAP_SURROUNDING_TEXT` mà ứng dụng khai báo: có thì **DIRECT**
-(commit thẳng, không gạch chân), không thì **PREEDIT**. Đo thực tế: trình duyệt `caps=0x29`
-→ DIRECT, gnome-terminal `caps=0x9` → PREEDIT.
+IBus không dùng riêng `IBUS_CAP_SURROUNDING_TEXT` để bật DIRECT: VS Code/xterm.js cũng
+báo `caps=0x29` cho textarea ẩn dù đó không phải buffer của shell. Văn bản tự do dùng
+**PREEDIT** trong suốt; terminal khai đúng purpose thì theo `TerminalMode`. Riêng thanh
+địa chỉ được **DIRECT** sau khi surrounding-text đã xác nhận, nên vẫn gõ tiếng Việt để
+tìm kiếm mà không bật composition/predict của trình duyệt. Chromium báo purpose URL;
+Firefox dùng `mozAwesomebar` nhưng GTK hạ thành FREE_FORM, nên engine nhận thêm
+heuristic UPPERCASE_SENTENCES (0x40) và latch nó đến hết phiên focus. Đây không
+phải app-id; surrounding vẫn bắt buộc và password/terminal luôn được ưu tiên.
 
 Ba cách đã thử và thất bại (đừng làm lại) được ghi đầy đủ trong README mục 6 và CLAUDE.md.
 
 Tầng XIM cũ (`ukxim`, `IMdkit`, cửa sổ `unikey`) và module GTK2 đã được gỡ bỏ: 16.160 dòng,
 63% mã nguồn, chỉ phục vụ X11 mà không ai còn dùng trên desktop Wayland. Bộ máy gõ
 (`ukengine`/`vnconv`/`byteio`) giữ nguyên không sửa một dòng.
+
+Nếu từng cài bản XIM cũ và còn thấy cửa sổ `TX: UTF8`, dọn đúng autostart và hai binary
+legacy nhưng giữ `~/.unikey` cho engine mới:
+
+```sh
+# Chạy từ cây mã nguồn x-unikey; script này không nằm trong gói .deb.
+sudo ./install-standalone.sh cleanup-legacy
+```
