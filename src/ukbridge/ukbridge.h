@@ -34,6 +34,16 @@ typedef struct {
     void (*commit)(void *user_data, const char *utf8);
     void (*preedit_changed)(void *user_data, const char *utf8);
     void (*erase_before_cursor)(void *user_data, int nchars);
+
+    /* Optional atomic end-of-composition operation.  IBus clients should
+       hide/end their preedit and commit through one frontend operation,
+       instead of exposing the intermediate states "committed text + stale
+       preedit" or "empty preedit before commit" to Electron/Firefox.
+
+       DIRECT commits still use `commit`; this callback is only used when a
+       non-empty PREEDIT buffer is flushed.  GTK/Qt modules may leave it NULL
+       and keep the portable clear-then-commit fallback. */
+    void (*commit_preedit)(void *user_data, const char *utf8);
 } UkBridgeVTable;
 
 typedef enum {
@@ -57,12 +67,6 @@ UkBridgeResult uk_bridge_backspace(UkBridge *b);
 void        uk_bridge_flush(UkBridge *b);   /* commit preedit dang co */
 void        uk_bridge_reset(UkBridge *b);   /* bo preedit, reset engine */
 const char *uk_bridge_preedit(UkBridge *b); /* luon khac NULL */
-
-/* Mac dinh bridge xoa preedit truoc roi moi commit, phu hop voi cac module
-   toolkit cu. Front-end IBus/Wayland phai lam nguoc lai: CommitText ket thuc
-   composition mot cach nguyen tu; neu xoa truoc, Chromium/xterm.js co the tu
-   chot composition cu roi lai nhan them CommitText, thanh lap nguyen tu. */
-void uk_bridge_set_commit_before_preedit_clear(UkBridge *b, int on);
 
 /*----------------------------------------------------------------
   Hai che do lam viec

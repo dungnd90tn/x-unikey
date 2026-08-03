@@ -567,9 +567,9 @@ static void build_dialog(SetupApp *app)
 
     mode_box = gtk_frame_new("Chế độ xử lý: Tự động");
     mode_text = gtk_label_new(
-        "UniKey tự chọn theo ô nhập: thanh địa chỉ Chromium/Firefox dùng "
-        "Direct; ô nhập thông thường (kể cả terminal VS Code báo "
-        "FREE_FORM) dùng Preedit. "
+        "UniKey tự chọn theo ô nhập: thanh địa chỉ Chromium/Firefox đã xác "
+        "nhận dùng Direct; ô nhập thông thường (kể cả input Firefox và "
+        "terminal VS Code báo FREE_FORM) dùng Preedit. "
         "Tuỳ chọn terminal ở trên chỉ áp dụng khi ứng dụng khai báo purpose "
         "TERMINAL. Không ép Direct toàn cục để tránh lỗi trong terminal.");
     gtk_label_set_line_wrap(GTK_LABEL(mode_text), TRUE);

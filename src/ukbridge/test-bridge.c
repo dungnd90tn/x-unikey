@@ -44,7 +44,7 @@ static void fake_preedit(void *user, const char *utf8)
 }
 
 static const UkBridgeVTable FakeVTable = {
-    fake_commit, fake_preedit, NULL
+    fake_commit, fake_preedit, NULL, NULL
 };
 
 /* Van ban ma nguoi dung nhin thay = da commit + phan preedit dang go */
@@ -160,7 +160,8 @@ static void direct_erase(void *user, int nchars)
 static const UkBridgeVTable DirectVTable = {
     direct_commit,
     direct_preedit,
-    direct_erase
+    direct_erase,
+    NULL
 };
 
 static void check_direct(int im, const char *im_name,
@@ -280,8 +281,9 @@ static void check_ibus_policy_case(const char *name,
 static void check_ibus_policy(void)
 {
     int url_latch;
-    int sentence_latch;
-    int trace_latch;
+    UkFirefoxEntryState firefox_entry;
+    UkFirefoxEntryState trace_entry;
+    UkFirefoxEntryState chat_entry;
     int trace_ok;
 
     /* VTE: purpose terminal thang caps 0x29 gia, nhung van ton trong option. */
@@ -303,53 +305,99 @@ static void check_ibus_policy(void)
     check_ibus_policy_case("URL bar no surrounding",
                            0, 0, 1, 1, 0, 1, UK_IBUS_MODE_OFF);
 
-    /* Firefox 153/GTK gui mozAwesomebar thanh p0+h0x40, roi h0. Latch hint
-       de no khong roi lai PREEDIT khi caps doi 0x9 -> 0x29. */
-    sentence_latch = uk_ibus_policy_update_sentence_latch(0, 1, 1);
-    sentence_latch = uk_ibus_policy_update_sentence_latch(sentence_latch, 1, 0);
+    /* Firefox 153/GTK gui mozAwesomebar thanh p0+h0x40, roi h0. Phai thay
+       DU chuoi nay moi confirm. Mot input web chi co h0x40/0x41 van PREEDIT. */
+    firefox_entry = uk_ibus_policy_update_firefox_entry(
+        UK_FIREFOX_ENTRY_NONE, 1, 1, 0);
+    check_ibus_policy_case("Firefox hint dang pending",
+                           0, 0, 0, 1, 1, 1,
+                           UK_IBUS_MODE_PREEDIT);
+    firefox_entry = uk_ibus_policy_update_firefox_entry(
+        firefox_entry, 1, 0, 1);
     check_ibus_policy_case("Firefox URL + surrounding",
-                           0, 0, sentence_latch, 1, 1, 1,
+                           0, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+                           1, 1, 1,
                            UK_IBUS_MODE_DIRECT);
     check_ibus_policy_case("Firefox URL chua surrounding",
-                           0, 0, sentence_latch, 1, 0, 1,
+                           0, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+                           1, 0, 1,
                            UK_IBUS_MODE_OFF);
     check_ibus_policy_case("terminal uu tien Firefox hint",
-                           0, 1, sentence_latch, 1, 1, 0,
+                           0, 1, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+                           1, 1, 0,
                            UK_IBUS_MODE_OFF);
     check_ibus_policy_case("terminal preedit uu tien hint",
-                           0, 1, sentence_latch, 1, 1, 1,
+                           0, 1, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+                           1, 1, 1,
                            UK_IBUS_MODE_PREEDIT);
     check_ibus_policy_case("password uu tien Firefox hint",
-                           1, 0, sentence_latch, 1, 1, 1,
+                           1, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+                           1, 1, 1,
                            UK_IBUS_MODE_OFF);
 
     /* Replay dung thu tu da ghi trong debug.log cua Firefox 153 Wayland:
        p0/h0,caps? -> caps0x9 -> h0x40 -> caps0x29 -> h0 -> focus reset. */
-    trace_latch = 0;
+    trace_entry = UK_FIREFOX_ENTRY_NONE;
     trace_ok =
-        uk_ibus_policy_choose(0, 0, trace_latch, 0, 0, 1) ==
+        uk_ibus_policy_choose(0, 0, 0, 0, 0, 1) ==
             UK_IBUS_MODE_PREEDIT &&
-        uk_ibus_policy_choose(0, 0, trace_latch, 1, 0, 1) ==
+        uk_ibus_policy_choose(0, 0, 0, 1, 0, 1) ==
             UK_IBUS_MODE_PREEDIT;
-    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 1, 1);
+    trace_entry = uk_ibus_policy_update_firefox_entry(
+        trace_entry, 1, 1, 0);
     trace_ok = trace_ok &&
-        uk_ibus_policy_choose(0, 0, trace_latch, 1, 0, 1) ==
-            UK_IBUS_MODE_OFF &&
-        uk_ibus_policy_choose(0, 0, trace_latch, 1, 1, 1) ==
-            UK_IBUS_MODE_DIRECT;
-    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 1, 0);
+        trace_entry == UK_FIREFOX_ENTRY_SENTENCE_ONLY &&
+        uk_ibus_policy_choose(0, 0, 0, 1, 0, 1) ==
+            UK_IBUS_MODE_PREEDIT &&
+        uk_ibus_policy_choose(0, 0, 0, 1, 1, 1) ==
+            UK_IBUS_MODE_PREEDIT;
+    trace_entry = uk_ibus_policy_update_firefox_entry(
+        trace_entry, 1, 0, 1);
     trace_ok = trace_ok &&
-        uk_ibus_policy_choose(0, 0, trace_latch, 1, 1, 1) ==
+        trace_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
+        uk_ibus_policy_choose(0, 0, 1, 1, 1, 1) ==
             UK_IBUS_MODE_DIRECT;
-    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 0, 0);
-    trace_latch = uk_ibus_policy_update_sentence_latch(trace_latch, 1, 0);
-    trace_ok = trace_ok && trace_latch == 0 &&
-        uk_ibus_policy_choose(0, 0, trace_latch, 1, 1, 1) ==
+    trace_entry = uk_ibus_policy_update_firefox_entry(
+        trace_entry, 0, 0, 1);
+    trace_entry = uk_ibus_policy_update_firefox_entry(
+        trace_entry, 1, 0, 1);
+    trace_ok = trace_ok && trace_entry == UK_FIREFOX_ENTRY_NONE &&
+        uk_ibus_policy_choose(0, 0, 0, 1, 1, 1) ==
             UK_IBUS_MODE_PREEDIT;
     if (trace_ok)
-        printf("  ok   policy Firefox trace: h0 -> h0x40 -> caps0x29 -> reset\n");
+        printf("  ok   policy Firefox trace: h0x40 -> h0 confirm -> reset\n");
     else {
         printf("  FAIL policy Firefox trace\n");
+        Failures++;
+    }
+
+    /* Trace that cua o chat Codex trong Firefox: h0x40 -> surrounding, nguoi
+       dung go nhieu tu trong PREEDIT, sau do app moi gui h0. Day KHONG phai
+       awesomebar; input truoc confirm phai reject DIRECT den het focus. */
+    chat_entry = uk_ibus_policy_update_firefox_entry(
+        UK_FIREFOX_ENTRY_NONE, 1, 1, 0);
+    chat_entry = uk_ibus_policy_note_input(chat_entry, 0);
+    chat_entry = uk_ibus_policy_update_firefox_entry(
+        chat_entry, 1, 0, 1);
+    if (chat_entry == UK_FIREFOX_ENTRY_REJECTED &&
+        uk_ibus_policy_choose(0, 0,
+                              chat_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+                              1, 1, 1) == UK_IBUS_MODE_PREEDIT) {
+        printf("  ok   policy Firefox chat: input truoc h0 -> PREEDIT\n");
+    } else {
+        printf("  FAIL policy Firefox chat late-confirm\n");
+        Failures++;
+    }
+
+    chat_entry = uk_ibus_policy_update_firefox_entry(
+        UK_FIREFOX_ENTRY_SENTENCE_ONLY, 1, 0, 1);
+    chat_entry = uk_ibus_policy_note_input(chat_entry, 0);
+    if (chat_entry == UK_FIREFOX_ENTRY_REJECTED &&
+        uk_ibus_policy_note_input(UK_FIREFOX_ENTRY_CONFIRMED, 1) ==
+            UK_FIREFOX_ENTRY_CONFIRMED) {
+        printf("  ok   policy Firefox: input truoc surrounding -> PREEDIT\n");
+    } else {
+        printf("  FAIL policy Firefox input-before-surrounding\n");
         Failures++;
     }
 
@@ -382,13 +430,24 @@ static void check_ibus_policy(void)
         Failures++;
     }
 
-    if (sentence_latch == 1 &&
-        uk_ibus_policy_update_sentence_latch(0, 1, 0) == 0 &&
-        uk_ibus_policy_update_sentence_latch(0, 0, 1) == 0 &&
-        uk_ibus_policy_update_sentence_latch(sentence_latch, 0, 1) == 0) {
-        printf("  ok   policy Firefox latch: h0x40 -> h0, reset explicit\n");
+    if (firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
+        uk_ibus_policy_update_firefox_entry(
+            UK_FIREFOX_ENTRY_NONE, 1, 0, 1) == UK_FIREFOX_ENTRY_NONE &&
+        uk_ibus_policy_update_firefox_entry(
+            UK_FIREFOX_ENTRY_NONE, 1, 0, 0) == UK_FIREFOX_ENTRY_NONE &&
+        uk_ibus_policy_update_firefox_entry(
+            UK_FIREFOX_ENTRY_NONE, 0, 1, 0) == UK_FIREFOX_ENTRY_NONE &&
+        uk_ibus_policy_update_firefox_entry(
+            UK_FIREFOX_ENTRY_SENTENCE_ONLY, 1, 0, 0) ==
+                UK_FIREFOX_ENTRY_REJECTED &&
+        uk_ibus_policy_update_firefox_entry(
+            UK_FIREFOX_ENTRY_REJECTED, 1, 0, 1) ==
+                UK_FIREFOX_ENTRY_REJECTED &&
+        uk_ibus_policy_update_firefox_entry(
+            firefox_entry, 0, 0, 1) == UK_FIREFOX_ENTRY_NONE) {
+        printf("  ok   policy Firefox: chi h0x40 -> h0 moi confirm\n");
     } else {
-        printf("  FAIL policy Firefox latch\n");
+        printf("  FAIL policy Firefox handshake\n");
         Failures++;
     }
 }
@@ -418,35 +477,42 @@ static void check_reset_cancels(void)
     uk_bridge_free(b);
 }
 
-/* Wayland/Chromium: commit phai den truoc empty-preedit. Neu empty den truoc,
-   xterm.js co the finalize composition cu vao PTY, sau do CommitText chen lai
-   nguyen tu. C/E la commit/empty callback; cac P truoc do la preedit update. */
-static void check_commit_before_clear(void)
+static void fake_atomic_commit(void *user, const char *utf8)
+{
+    FakeEntry *e = (FakeEntry *)user;
+
+    /* Mo phong HidePreeditText -> CommitText cua IBus: frontend tu ket thuc
+       composition, bridge khong phat them empty-preedit sau callback nay. */
+    e->preedit[0] = '\0';
+    strncat(e->committed, utf8,
+            sizeof(e->committed) - strlen(e->committed) - 1);
+    strncat(e->events, "A", sizeof(e->events) - strlen(e->events) - 1);
+}
+
+/* IBus phai dung callback atomic cho moi lan chot tu. Neu quay lai C->E thi
+   Firefox/Electron co the replace theo composition range cu ("dangắng"); neu
+   E->C thi xterm.js co the finalize roi nhan doi CommitText. */
+static void check_ibus_atomic_commit(void)
 {
     FakeEntry e;
     UkBridge *b;
-    size_t i;
-    int order_ok = 1;
+    UkBridgeVTable vt = FakeVTable;
 
     memset(&e, 0, sizeof(e));
-    b = uk_bridge_new(&FakeVTable, &e);
+    vt.commit_preedit = fake_atomic_commit;
+    b = uk_bridge_new(&vt, &e);
     uk_bridge_set_enabled(b, 1);
     uk_bridge_set_input_method(b, UkTelex);
-    uk_bridge_set_commit_before_preedit_clear(b, 1);
-    type_ascii(b, "ok chuwa nhir khoong dduwowcj ");
+    type_ascii(b, "ddang ");
 
-    for (i = 0; e.events[i]; i++) {
-        if ((e.events[i] == 'C' && e.events[i + 1] != 'E') ||
-            (e.events[i] == 'E' && (i == 0 || e.events[i - 1] != 'C'))) {
-            order_ok = 0;
-            break;
-        }
-    }
-
-    if (strcmp(e.committed, "ok chưa nhỉ không được ") == 0 && order_ok) {
-        printf("  ok   IBus commit truoc clear: khong lap tu trong terminal\n");
+    if (strcmp(e.committed, "đang ") == 0 &&
+        strcmp(e.preedit, "") == 0 &&
+        strchr(e.events, 'A') != NULL &&
+        strchr(e.events, 'C') == NULL &&
+        strchr(e.events, 'E') == NULL) {
+        printf("  ok   IBus atomic preedit commit: khong lo stale range\n");
     } else {
-        printf("  FAIL thu tu IBus: events=%s commit=%s preedit=%s\n",
+        printf("  FAIL IBus atomic commit: events=%s commit=%s preedit=%s\n",
                e.events, e.committed, e.preedit);
         Failures++;
     }
@@ -874,7 +940,7 @@ int main(void)
     check_mode_switch();
     check_ibus_policy();
     check_reset_cancels();
-    check_commit_before_clear();
+    check_ibus_atomic_commit();
     check_shared_state();
     check_options_do_not_reload_mid_composition();
 

@@ -101,7 +101,7 @@ struct _UkIBusEngine {
     gboolean   preedit_visible;
     gboolean   capabilities_known;
     gboolean   saw_url;
-    gboolean   saw_sentence_entry;
+    UkFirefoxEntryState firefox_entry;
     gboolean   focused;
     gboolean   mode_applied;
     UkIBusMode mode;
@@ -121,6 +121,31 @@ static void on_commit(void *user_data, const char *utf8)
 {
     UkIBusEngine *self = (UkIBusEngine *)user_data;
     IBusText *text = ibus_text_new_from_string(utf8);
+    uk_log("engine=%p direct-commit chars=%ld", (void *)self,
+           (long)g_utf8_strlen(utf8, -1));
+    ibus_engine_commit_text(IBUS_ENGINE(self), text);
+}
+
+/* Ket thuc mot PREEDIT ma khong de client thay trang thai trung gian.
+
+   Thu tu C -> empty truoc day de preedit cu con ton tai khi CommitText den;
+   Firefox/Electron co luc dung composition range cu de replace va tao chu lap
+   nhu "dangắng". Thu tu empty -> C lai lam xterm.js tu finalize preedit, roi
+   nhan them CommitText. Cach ma cac IBus engine chuan (vi du Mozc) dung la
+   HidePreeditText -> CommitText: ket thuc presentation cua composition truoc,
+   nhung khong phat mot empty-preedit de client tu commit no. */
+static void on_commit_preedit(void *user_data, const char *utf8)
+{
+    UkIBusEngine *self = (UkIBusEngine *)user_data;
+    IBusText *text;
+
+    if (self->preedit_visible)
+        ibus_engine_hide_preedit_text(IBUS_ENGINE(self));
+    self->preedit_visible = FALSE;
+
+    uk_log("engine=%p preedit-commit chars=%ld", (void *)self,
+           (long)g_utf8_strlen(utf8, -1));
+    text = ibus_text_new_from_string(utf8);
     ibus_engine_commit_text(IBUS_ENGINE(self), text);
 }
 
@@ -130,6 +155,7 @@ static void on_erase_before_cursor(void *user_data, int nchars)
 {
     UkIBusEngine *self = (UkIBusEngine *)user_data;
     /* offset am = lui ve truoc con tro */
+    uk_log("engine=%p direct-delete chars=%d", (void *)self, nchars);
     ibus_engine_delete_surrounding_text(IBUS_ENGINE(self), -nchars, (guint)nchars);
 }
 
@@ -152,8 +178,10 @@ static void on_preedit_changed(void *user_data, const char *utf8)
        commit khi Chromium reset Wayland text-input, trong khi bridge cung
        CommitText o dau cach -- xterm.js nhan cung mot tu hai lan.
 
-       Gui ca empty update voi mode CLEAR, khong chi HidePreeditText: nhu vay
-       cache mode o IBus/Mutter duoc ha xuong CLEAR truoc moi reset. */
+       Khi dang go, moi update mang mode CLEAR de focus/reset khong tu commit.
+       Khi chot tu, bridge goi on_commit_preedit() rieng de phat
+       HidePreeditText -> CommitText, khong gui empty update trung gian. Empty
+       o day chi con xuat hien khi reset/huy composition that su. */
     ibus_engine_update_preedit_text_with_mode(IBUS_ENGINE(self), text, len,
                                               visible,
                                               IBUS_ENGINE_PREEDIT_CLEAR);
@@ -163,7 +191,8 @@ static void on_preedit_changed(void *user_data, const char *utf8)
 static const UkBridgeVTable BridgeVTable = {
     on_commit,
     on_preedit_changed,
-    on_erase_before_cursor
+    on_erase_before_cursor,
+    on_commit_preedit
 };
 
 static void uk_ibus_engine_update_mode(UkIBusEngine *self,
@@ -350,6 +379,22 @@ static void uk_ibus_engine_property_activate(IBusEngine *engine,
 /*--------------------------------------------------------------------
   Xu ly phim
  --------------------------------------------------------------------*/
+static void uk_ibus_engine_note_context_input(UkIBusEngine *self)
+{
+    UkFirefoxEntryState old_state = self->firefox_entry;
+
+    self->firefox_entry = uk_ibus_policy_note_input(
+        self->firefox_entry, self->mode == UK_IBUS_MODE_DIRECT);
+    if (old_state != self->firefox_entry) {
+        uk_log("engine=%p firefox-entry=rejected reason=input-before-direct",
+               (void *)self);
+        /* CONFIRMED nhung chua co surrounding dang o OFF. Khi phim dau tien
+           den, reject candidate va ap PREEDIT TRUOC khi xu ly phim; khong de
+           ky tu raw lot vao app roi moi chuyen DIRECT sau do. */
+        uk_ibus_engine_update_mode(self, "input-before-direct");
+    }
+}
+
 static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
                                                  guint keyval,
                                                  guint keycode,
@@ -361,7 +406,16 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
 
     (void)keycode;
 
-    /* O mat khau/PIN, hoac fallback TerminalMode=Off: cho phim di thang. */
+    /* Neu candidate Firefox da confirm metadata nhung surrounding chua toi,
+       mode tam la OFF. Phim nhap dau tien phai huy candidate va quay ve
+       PREEDIT; password/terminal OFF that su van cho phim di thang. */
+    if (self->mode == UK_IBUS_MODE_OFF &&
+        !(modifiers & IBUS_RELEASE_MASK) &&
+        !(modifiers & (IBUS_CONTROL_MASK | IBUS_MOD1_MASK | IBUS_SUPER_MASK)) &&
+        !uk_keys_is_modifier(keyval) &&
+        (keyval == IBUS_KEY_BackSpace || uk_keys_is_editing(keyval) ||
+         uk_keys_is_keypad_digit(keyval) || ibus_keyval_to_unicode(keyval) != 0))
+        uk_ibus_engine_note_context_input(self);
     if (self->mode == UK_IBUS_MODE_OFF)
         return FALSE;
 
@@ -392,15 +446,19 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
         return FALSE;
     }
 
-    if (keyval == IBUS_KEY_BackSpace)
+    if (keyval == IBUS_KEY_BackSpace) {
+        uk_ibus_engine_note_context_input(self);
         return uk_bridge_backspace(self->bridge) == UK_BRIDGE_CONSUMED;
+    }
 
     if (uk_keys_is_editing(keyval)) {
+        uk_ibus_engine_note_context_input(self);
         uk_bridge_flush(self->bridge);
         return FALSE;
     }
 
     if (uk_keys_is_keypad_digit(keyval)) {
+        uk_ibus_engine_note_context_input(self);
         uk_bridge_flush(self->bridge);
         return FALSE;
     }
@@ -408,6 +466,8 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
     uch = ibus_keyval_to_unicode(keyval);
     if (uch == 0)
         return FALSE;
+
+    uk_ibus_engine_note_context_input(self);
 
     return uk_bridge_key(self->bridge, uch,
                          (modifiers & IBUS_SHIFT_MASK) ? 1 : 0,
@@ -422,9 +482,9 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
   no khong phai editable buffer -- delete/commit duoc bien thanh byte cua PTY.
   Vi vay IBus dung PREEDIT trong suot cho van ban tu do. Purpose URL duoc vao
   DIRECT sau handshake. Firefox/GTK lai gui thanh dia chi mozAwesomebar thanh
-  FREE_FORM; fingerprint UPPERCASE_SENTENCES cua context do duoc latch cung
-  focus va cung phai qua handshake. Terminal khai purpose dung van ton trong
-  TerminalMode truoc moi rule thanh dia chi.
+  FREE_FORM; chi chuoi hint sentence-only -> none moi confirm context do, vi
+  input web cung co UPPERCASE_SENTENCES. Terminal khai purpose dung van ton
+  trong TerminalMode truoc moi rule thanh dia chi.
  --------------------------------------------------------------------*/
 static const char *uk_ibus_mode_name(UkIBusMode mode)
 {
@@ -432,6 +492,17 @@ static const char *uk_ibus_mode_name(UkIBusMode mode)
     case UK_IBUS_MODE_OFF:     return "OFF";
     case UK_IBUS_MODE_PREEDIT: return "PREEDIT";
     case UK_IBUS_MODE_DIRECT:  return "DIRECT";
+    }
+    return "?";
+}
+
+static const char *uk_firefox_entry_name(UkFirefoxEntryState state)
+{
+    switch (state) {
+    case UK_FIREFOX_ENTRY_NONE:          return "none";
+    case UK_FIREFOX_ENTRY_SENTENCE_ONLY: return "pending";
+    case UK_FIREFOX_ENTRY_CONFIRMED:     return "confirmed";
+    case UK_FIREFOX_ENTRY_REJECTED:      return "rejected";
     }
     return "?";
 }
@@ -453,7 +524,8 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
         is_secret = TRUE;
 #endif
     is_terminal = self->purpose == IBUS_INPUT_PURPOSE_TERMINAL;
-    is_direct_entry = self->saw_url || self->saw_sentence_entry;
+    is_direct_entry = self->saw_url ||
+        self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED;
     can_surround = (self->capabilities & IBUS_CAP_SURROUNDING_TEXT) != 0;
     fallback_preedit =
         uk_bridge_get_terminal_mode(self->bridge) == UkTerminalPreedit;
@@ -476,11 +548,11 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     }
 
     uk_log("engine=%p reason=%s focus=%s caps=%s0x%x purpose=%u hints=0x%x "
-           "url=%s sentence-entry=%s surrounding=%s -> %s%s",
+           "url=%s firefox-entry=%s surrounding=%s -> %s%s",
            (void *)self, reason, self->focused ? "yes" : "no",
            self->capabilities_known ? "" : "?", self->capabilities,
            self->purpose, self->hints, self->saw_url ? "yes" : "no",
-           self->saw_sentence_entry ? "yes" : "no",
+           uk_firefox_entry_name(self->firefox_entry),
            can_surround ? "yes" : "no",
            uk_ibus_mode_name(new_mode), self->focused ? "" : " (deferred)");
 }
@@ -496,7 +568,7 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
     self->saw_url = FALSE;
-    self->saw_sentence_entry = FALSE;
+    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = TRUE;
     self->mode_applied = FALSE;
     uk_bridge_reset(self->bridge);
@@ -513,7 +585,7 @@ static void uk_ibus_engine_focus_out(IBusEngine *engine)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
     self->saw_url = FALSE;
-    self->saw_sentence_entry = FALSE;
+    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     uk_log("engine=%p focus-out", (void *)self);
@@ -552,10 +624,11 @@ static void uk_ibus_engine_set_content_type(IBusEngine *engine,
         self->saw_url,
         purpose == IBUS_INPUT_PURPOSE_URL,
         purpose == IBUS_INPUT_PURPOSE_FREE_FORM);
-    self->saw_sentence_entry = uk_ibus_policy_update_sentence_latch(
-        self->saw_sentence_entry,
+    self->firefox_entry = uk_ibus_policy_update_firefox_entry(
+        self->firefox_entry,
         purpose == IBUS_INPUT_PURPOSE_FREE_FORM,
-        (hints & IBUS_INPUT_HINT_UPPERCASE_SENTENCES) != 0);
+        hints == IBUS_INPUT_HINT_UPPERCASE_SENTENCES,
+        hints == IBUS_INPUT_HINT_NONE);
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->set_content_type(engine,
                                                                     purpose, hints);
     uk_ibus_engine_update_mode(self, "content-type");
@@ -581,7 +654,7 @@ static void uk_ibus_engine_disable(IBusEngine *engine)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
     self->saw_url = FALSE;
-    self->saw_sentence_entry = FALSE;
+    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->disable(engine);
@@ -603,17 +676,12 @@ static void uk_ibus_engine_init(UkIBusEngine *self)
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
     self->saw_url = FALSE;
-    self->saw_sentence_entry = FALSE;
+    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     self->mode = UK_IBUS_MODE_PREEDIT;
     self->bridge = uk_bridge_new(&BridgeVTable, self);
     uk_ibus_engine_build_properties(self);
-
-    /* Mutter gui CommitText kem lenh ket thuc preedit trong cung transaction.
-       Commit truoc roi moi phat empty update tranh xterm.js finalize preedit cu
-       thanh du lieu PTY truoc khi no nhan CommitText. */
-    uk_bridge_set_commit_before_preedit_clear(self->bridge, 1);
 
     /* Khi la ibus engine thi nguoi dung bat/tat bang Super-Space cua GNOME,
        nen engine luon o trang thai "dang go tieng Viet" khi duoc chon. */

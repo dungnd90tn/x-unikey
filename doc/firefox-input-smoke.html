@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>x-unikey Firefox input smoke test</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.45 system-ui, sans-serif; }
+    body { max-width: 900px; margin: 32px auto; padding: 0 20px; }
+    label { display: block; margin: 18px 0 6px; font-weight: 650; }
+    input, textarea, [contenteditable] {
+      box-sizing: border-box; width: 100%; min-height: 42px; padding: 9px 11px;
+      border: 1px solid #8888; border-radius: 6px; font: inherit;
+    }
+    textarea, [contenteditable] { min-height: 78px; }
+    code { padding: 2px 5px; border-radius: 4px; background: #8882; }
+    #events { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.35 monospace; }
+  </style>
+</head>
+<body>
+  <h1>Firefox input smoke test</h1>
+  <p>Gõ thật nhanh cùng một câu vào từng ô:</p>
+  <p><code>đang thắng trắng thật thử gõ thật nhanh</code></p>
+
+  <label for="plain">1. Input text thường</label>
+  <input id="plain" type="text" autocomplete="off" spellcheck="false">
+
+  <label for="sentence">2. Input autocapitalize + spellcheck</label>
+  <input id="sentence" type="text" autocapitalize="sentences" spellcheck="true">
+
+  <label for="search">3. Input search</label>
+  <input id="search" type="search" autocomplete="off" spellcheck="false">
+
+  <label for="controlled">4. Input bị JavaScript đồng bộ lại value</label>
+  <input id="controlled" type="text" autocomplete="off" spellcheck="false">
+
+  <label for="textarea">5. Textarea</label>
+  <textarea id="textarea" autocomplete="off" spellcheck="false"></textarea>
+
+  <label for="editable">6. Contenteditable</label>
+  <div id="editable" contenteditable="true" spellcheck="false"></div>
+
+  <h2>Sự kiện của ô đang gõ</h2>
+  <div id="events">Chưa có sự kiện.</div>
+
+  <script>
+    const output = document.querySelector('#events');
+    const history = [];
+    const fields = document.querySelectorAll('input, textarea, [contenteditable]');
+
+    function textOf(element) {
+      return element.isContentEditable ? element.textContent : element.value;
+    }
+
+    function record(event) {
+      const row = [
+        event.target.id,
+        event.type,
+        event.inputType || '-',
+        JSON.stringify(event.data ?? ''),
+        `composing=${Boolean(event.isComposing)}`,
+        `value=${JSON.stringify(textOf(event.target))}`
+      ].join(' | ');
+      history.push(row);
+      if (history.length > 30) history.shift();
+      output.textContent = history.join('\n');
+    }
+
+    for (const field of fields) {
+      for (const type of [
+        'compositionstart', 'compositionupdate', 'compositionend',
+        'beforeinput', 'input'
+      ]) field.addEventListener(type, record);
+    }
+
+    // Gan lai value mo phong controlled input cua React/Vue. Selection duoc
+    // giu nguyen de ban than fixture khong tao them loi caret.
+    document.querySelector('#controlled').addEventListener('input', event => {
+      const field = event.currentTarget;
+      const start = field.selectionStart;
+      const end = field.selectionEnd;
+      field.value = field.value;
+      field.setSelectionRange(start, end);
+    });
+  </script>
+</body>
+</html>

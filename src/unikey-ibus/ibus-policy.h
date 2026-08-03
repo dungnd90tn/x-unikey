@@ -11,8 +11,10 @@
  *   - terminal khai bao dung purpose phai theo TerminalMode;
  *   - thanh URL chi dung DIRECT khi client da xac nhan surrounding-text; nhu
  *     vay van go duoc tieng Viet de search ma khong vao composition/predict;
- *     Firefox/GTK khong map inputmode=mozAwesomebar sang purpose=URL, nen dung
- *     them heuristic FREE_FORM + UPPERCASE_SENTENCES ma no gui;
+ *     Firefox/GTK khong map inputmode=mozAwesomebar sang purpose=URL. Khong
+ *     duoc dung rieng UPPERCASE_SENTENCES de nhan no: input/textarea web cung
+ *     co hint nay. Chi chap nhan chuoi rieng da quan sat o awesomebar:
+ *     sentence-only -> NONE trong cung mot focus;
  *   - moi context IBus con lai dung PREEDIT. Capability surrounding-text chi
  *     noi rang protocol co lenh xoa, khong dam bao no tro vao van ban that cua
  *     ung dung. VS Code/xterm.js la phan vi du: textarea an bao surrounding
@@ -38,24 +40,53 @@ uk_ibus_policy_update_url_latch(int saw_url, int is_url, int is_free_form)
     return saw_url;
 }
 
-/* Firefox dung inputmode rieng "mozAwesomebar". GTK khong hieu gia tri nay,
-   nen IBus nhan FREE_FORM thay vi URL. Tuy nhien Firefox van gui hint
-   UPPERCASE_SENTENCES (0x40), sau do co the tra hints ve 0 khi surrounding
-   text duoc bat. Giu latch den het focus de khong roi lai PREEDIT giua luc go.
+typedef enum {
+    UK_FIREFOX_ENTRY_NONE,
+    UK_FIREFOX_ENTRY_SENTENCE_ONLY,
+    UK_FIREFOX_ENTRY_CONFIRMED,
+    UK_FIREFOX_ENTRY_REJECTED
+} UkFirefoxEntryState;
 
-   Khong duoc latch chi tu SURROUNDING_TEXT: VS Code/xterm.js cung co bit do.
-   Purpose tuong minh khac FREE_FORM xoa latch, de password/terminal khong ke
-   thua heuristic cua context truoc. */
-static inline int
-uk_ibus_policy_update_sentence_latch(int saw_sentence,
-                                     int is_free_form,
-                                     int has_sentence_hint)
+/* Firefox dung inputmode rieng "mozAwesomebar". GTK khong hieu gia tri nay,
+   nen IBus nhan FREE_FORM thay vi URL. Trace Firefox 153 Wayland co mot
+   handshake on dinh: hints=UPPERCASE_SENTENCES (0x40), sau do hints=NONE.
+
+   UPPERCASE_SENTENCES mot minh KHONG phai dau van tay: input/textarea web
+   (nhat la autocapitalize/spellcheck) cung gui 0x40 hoac 0x41. Chi confirm sau
+   canh chuyen sentence-only -> none. Trong luc moi thay nua dau, giu PREEDIT;
+   khong nhay sang OFF/DIRECT giua am tiet. Hint khac va purpose tuong minh se
+   xoa candidate. CONFIRMED/REJECTED duoc latch den focus-out vi Firefox co
+   the lap lai set_content_type sau khi surrounding thay doi. */
+static inline UkFirefoxEntryState
+uk_ibus_policy_update_firefox_entry(UkFirefoxEntryState state,
+                                    int is_free_form,
+                                    int is_sentence_only,
+                                    int has_no_hints)
 {
     if (!is_free_form)
-        return 0;
-    if (has_sentence_hint)
-        return 1;
-    return saw_sentence;
+        return UK_FIREFOX_ENTRY_NONE;
+    if (state == UK_FIREFOX_ENTRY_CONFIRMED ||
+        state == UK_FIREFOX_ENTRY_REJECTED)
+        return state;
+    if (is_sentence_only)
+        return UK_FIREFOX_ENTRY_SENTENCE_ONLY;
+    if (state == UK_FIREFOX_ENTRY_SENTENCE_ONLY && has_no_hints)
+        return UK_FIREFOX_ENTRY_CONFIRMED;
+    if (state == UK_FIREFOX_ENTRY_SENTENCE_ONLY)
+        return UK_FIREFOX_ENTRY_REJECTED;
+    return UK_FIREFOX_ENTRY_NONE;
+}
+
+/* Handshake awesomebar phai hoan tat TRUOC phim nhap dau tien. Trace thuc te
+   cua o chat Codex/Firefox cho thay no gui h0x40, nguoi dung go nhieu tu, roi
+   moi gui h0. Neu confirm muon, bridge doi PREEDIT -> DIRECT giua context va
+   co the replace theo van ban da commit. Latch REJECTED den focus-out. */
+static inline UkFirefoxEntryState
+uk_ibus_policy_note_input(UkFirefoxEntryState state, int direct_ready)
+{
+    return (state == UK_FIREFOX_ENTRY_SENTENCE_ONLY ||
+            (state == UK_FIREFOX_ENTRY_CONFIRMED && !direct_ready))
+        ? UK_FIREFOX_ENTRY_REJECTED : state;
 }
 
 static inline UkIBusMode

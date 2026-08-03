@@ -42,7 +42,6 @@ struct _UkBridge {
     int            direct_mode;   /* commit thang thay vi dung preedit */
     int            terminal_mode; /* UkTerminalOff | UkTerminalPreedit */
     int            user_keymap_loaded;
-    int            commit_before_preedit_clear;
 };
 
 static int GlobalInited = 0;
@@ -208,9 +207,12 @@ void uk_bridge_flush(UkBridge *b)
     if (b->preedit.len > 0) {
         char *s = strdup(b->preedit.data);
         buf_clear(&b->preedit);
-        if (b->commit_before_preedit_clear) {
-            emit_commit(b, s);
-            emit_preedit(b);
+        if (b->vt.commit_preedit) {
+            /* Cho frontend ket thuc composition mot cach nguyen tu.  Dac biet
+               IBus/Wayland khong duoc de client nhin thay CommitText trong
+               khi preedit cu van con, vi Electron/Firefox co the replace lai
+               sai vi tri va tao chu lap nhu "dangắng". */
+            b->vt.commit_preedit(b->user_data, s);
         } else {
             emit_preedit(b);
             emit_commit(b, s);
@@ -232,11 +234,6 @@ void uk_bridge_reset(UkBridge *b)
 const char *uk_bridge_preedit(UkBridge *b)
 {
     return b->preedit.data;
-}
-
-void uk_bridge_set_commit_before_preedit_clear(UkBridge *b, int on)
-{
-    b->commit_before_preedit_clear = on ? 1 : 0;
 }
 
 /*----------------------------------------------------------------*/

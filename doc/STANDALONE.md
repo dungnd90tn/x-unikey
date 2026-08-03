@@ -169,9 +169,14 @@ báo `caps=0x29` cho textarea ẩn dù đó không phải buffer của shell. V�
 **PREEDIT** trong suốt; terminal khai đúng purpose thì theo `TerminalMode`. Riêng thanh
 địa chỉ được **DIRECT** sau khi surrounding-text đã xác nhận, nên vẫn gõ tiếng Việt để
 tìm kiếm mà không bật composition/predict của trình duyệt. Chromium báo purpose URL;
-Firefox dùng `mozAwesomebar` nhưng GTK hạ thành FREE_FORM, nên engine nhận thêm
-heuristic UPPERCASE_SENTENCES (0x40) và latch nó đến hết phiên focus. Đây không
-phải app-id; surrounding vẫn bắt buộc và password/terminal luôn được ưu tiên.
+Firefox dùng `mozAwesomebar` nhưng GTK hạ thành FREE_FORM. Engine chỉ nhận đó là
+thanh địa chỉ sau chuỗi UPPERCASE_SENTENCES-only (0x40) -> NONE trong cùng một
+focus; hint 0x40/0x41 đơn lẻ của input/textarea vẫn PREEDIT. Surrounding vẫn bắt
+buộc và password/terminal luôn được ưu tiên. IBus chốt preedit bằng
+`HidePreeditText -> CommitText` để Firefox/Electron không thấy composition range
+cũ trong lúc văn bản mới đã được commit. Nếu có phím nhập trước khi chuỗi
+0x40 -> NONE hoàn tất (như ô chat Codex), candidate bị loại đến focus-out để
+không chuyển PREEDIT -> DIRECT giữa câu.
 
 Ba cách đã thử và thất bại (đừng làm lại) được ghi đầy đủ trong README mục 6 và CLAUDE.md.
 
