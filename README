@@ -191,7 +191,7 @@ IBus engine chon che do theo input purpose cua tung o nhap:
     password/PIN          -> OFF
     purpose=TERMINAL      -> theo TerminalMode       (gnome-terminal/VTE)
     purpose=URL + surrounding -> DIRECT               (Chromium address bar)
-    Firefox FREE_FORM+h0x40+surrounding -> DIRECT      (mozAwesomebar fallback)
+    Firefox FREE_FORM+h0x40->h0+surrounding -> DIRECT  (mozAwesomebar handshake)
     moi context con lai   -> PREEDIT trong suot       (web, app, VS Code/xterm.js)
 
 `IBUS_CAP_SURROUNDING_TEXT` chi noi rang client co mot buffer protocol, khong
@@ -203,17 +203,23 @@ Ngoai le hep la thanh dia chi: day la buffer that. Engine doi den khi
 surrounding-text duoc xac nhan roi dung DIRECT, nen van go duoc tieng Viet de
 search ma khong hien composition/predict. Chromium gui purpose=URL roi co the
 tam tra ve FREE_FORM; engine giu co URL den het phien focus. Firefox dung
-`inputmode=mozAwesomebar` ma GTK hien chua map sang URL, nen engine latch them
-heuristic FREE_FORM + hint UPPERCASE_SENTENCES (0x40) ma Firefox gui. Hint nay
-khong phai app-id Firefox; surrounding van bat buoc, con password/terminal duoc
-uu tien truoc. Chi FREE_FORM + surrounding van khong du de bat DIRECT, de giu
-an toan cho terminal.
+`inputmode=mozAwesomebar` ma GTK hien chua map sang URL. Engine chi confirm khi
+thay du chuoi metadata FREE_FORM + UPPERCASE_SENTENCES-only (0x40) roi NONE
+trong cung mot focus. Mot hint 0x40/0x41 don le van PREEDIT, vi input/textarea
+web cung dung autocapitalize/spellcheck va tung gay replace sai nhu `đangắng`.
+Handshake cung phai xong truoc phim nhap dau tien. Neu nguoi dung da bat dau go
+(trace o chat Codex cho thay app co the gui NONE rat muon), context bi latch
+PREEDIT den focus-out va khong duoc doi sang DIRECT giua cau.
+Surrounding van bat buoc, con password/terminal duoc uu tien truoc. Chi
+FREE_FORM + surrounding van khong du de bat DIRECT, de giu an toan cho terminal.
 
 Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
 
 IBus publish preedit bang `PREEDIT_CLEAR` va la ben duy nhat commit no. Khi het
-tu, CommitText phai di truoc empty-preedit; neu xoa composition truoc, Chromium
-co the tu finalize tu cu vao PTY roi nhan them CommitText, tao `chua chua`.
+tu, engine dung `HidePreeditText -> CommitText`, cung cach IBus Mozc ket thuc
+composition. Khong con phat hai trang thai trung gian CommitText + preedit cu
+(co the lam Firefox/Electron replace nham thanh `đangắng`) hoac empty-preedit +
+CommitText (xterm.js co the finalize hai lan thanh `chưa chưa`).
 
 CAC CACH KHONG AN TOAN, dung lam lai:
 
