@@ -190,36 +190,37 @@ IBus engine chon che do theo input purpose cua tung o nhap:
 
     password/PIN          -> OFF
     purpose=TERMINAL      -> theo TerminalMode       (gnome-terminal/VTE)
-    purpose=URL + surrounding -> DIRECT               (Chromium address bar)
-    Firefox FREE_FORM+h0x40->h0+surrounding -> DIRECT  (mozAwesomebar handshake)
-    moi context con lai   -> PREEDIT trong suot       (web, app, VS Code/xterm.js)
+    purpose=ALPHA/URL/EMAIL/NAME + surrounding -> DIRECT
+    FREE_FORM+h0x40/0x41+surrounding -> DIRECT         (Firefox/web/VS Code chat)
+    FREE_FORM+h0+surrounding -> PREEDIT                (input text / xterm.js)
+    moi context con lai   -> PREEDIT trong suot       (app)
 
 `IBUS_CAP_SURROUNDING_TEXT` chi noi rang client co mot buffer protocol, khong
 chung minh buffer do la van ban nguoi dung dang sua. VS Code/xterm.js la phan
 vi du: textarea an cua Chromium bao caps=0x29 va purpose=FREE_FORM, nhung thao
 tac delete/commit tren no duoc xterm.js bien thanh byte gui vao PTY. Vi khong co
 app-id hay purpose de nhan ra terminal nay, IBus khong tu chon DIRECT tu caps.
-Ngoai le hep la thanh dia chi: day la buffer that. Engine doi den khi
-surrounding-text duoc xac nhan roi dung DIRECT, nen van go duoc tieng Viet de
-search ma khong hien composition/predict. Chromium gui purpose=URL roi co the
-tam tra ve FREE_FORM; engine giu co URL den het phien focus. Firefox dung
-`inputmode=mozAwesomebar` ma GTK hien chua map sang URL. Engine chi confirm khi
-thay du chuoi metadata FREE_FORM + UPPERCASE_SENTENCES-only (0x40) roi NONE
-trong cung mot focus. Mot hint 0x40/0x41 don le van PREEDIT, vi input/textarea
-web cung dung autocapitalize/spellcheck va tung gay replace sai nhu `đangắng`.
-Handshake cung phai xong truoc phim nhap dau tien. Neu nguoi dung da bat dau go
-(trace o chat Codex cho thay app co the gui NONE rat muon), context bi latch
-PREEDIT den focus-out va khong duoc doi sang DIRECT giua cau.
-Surrounding van bat buoc, con password/terminal duoc uu tien truoc. Chi
-FREE_FORM + surrounding van khong du de bat DIRECT, de giu an toan cho terminal.
+Thanh dia chi va chat/input web la buffer that. Purpose tuong minh ALPHA, URL,
+EMAIL va NAME vao DIRECT; latch duoc giu neu client tra lai FREE_FORM. Chromium
+gui purpose=URL;
+Firefox dung `inputmode=mozAwesomebar` ma GTK ha thanh FREE_FORM+h0x40. Cac o
+chat/input co spellcheck/autocapitalize (gom VS Code add-on) gui h0x40 hoac
+h0x41. Engine latch dau van tay nay va dung DIRECT ngay khi surrounding-text
+duoc xac nhan, nen khong kich hoat composition/predict. Neu user Tab/go nhanh
+va phim dau tien den truoc surrounding, app tu chen raw key con bridge ghi no
+vao state UniKey; khi caps toi, handoff sang DIRECT ma khong reset am tiet.
+Editing/BackSpace truoc caps moi reject candidate vi chua biet caret/range.
+Surrounding van bat buoc, password/terminal duoc uu tien truoc. FREE_FORM +
+surrounding + hints=0 khong du phan biet `input=text` voi textarea an cua
+xterm.js, nen giu PREEDIT va khong vao DIRECT/delete-surrounding. Chi client
+khai `purpose=TERMINAL` moi theo `TerminalMode`.
 
 Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
 
 IBus publish preedit bang `PREEDIT_CLEAR` va la ben duy nhat commit no. Khi het
-tu, engine dung `HidePreeditText -> CommitText`, cung cach IBus Mozc ket thuc
-composition. Khong con phat hai trang thai trung gian CommitText + preedit cu
-(co the lam Firefox/Electron replace nham thanh `đangắng`) hoac empty-preedit +
-CommitText (xterm.js co the finalize hai lan thanh `chưa chưa`).
+tu, engine dung `CommitText -> HidePreeditText`: commit vao composition range
+hien tai, sau do ket thuc presentation. Engine khong phat generic empty-preedit,
+tranh de xterm.js tu finalize roi nhan them CommitText thanh `chưa chưa`.
 
 CAC CACH KHONG AN TOAN, dung lam lai:
 
@@ -241,13 +242,14 @@ Trong che do DIRECT, ky tu thuong cung phai TU COMMIT chu khong tra ve cho
 ung dung tu chen: neu khong, ky tu di duong su kien ban phim con lenh xoa di
 duong input-method, va khi go nhanh se dao thu tu ("đấy" ra "đâdấyd").
 
-Client khai purpose=TERMINAL thi ton trong `TerminalMode`:
+Client khai purpose=TERMINAL thi tuan theo `TerminalMode`:
 
     TerminalMode = Off       # mac dinh: tat bo go trong terminal
     TerminalMode = Preedit   # go tieng Viet, khong gach chan
 
-VS Code hien khong khai purpose TERMINAL, nen tu dong dung PREEDIT an toan bat
-ke option nay.
+VS Code khong khai purpose TERMINAL va metadata IBus cua no giong `input=text`;
+vi vay no dung PREEDIT. Khong the tu dong ep OFF/DIRECT cho VS Code terminal
+ma khong tat hoac lam hong form web cung metadata.
 
 Go roi: touch ~/.unikey/debug && ibus restart
         cat ~/.unikey/debug.log        (in instance, focus, purpose, caps, mode)

@@ -75,7 +75,7 @@ static char AutoRestoreNonVnCmt[] =
 static char TerminalModeCmt[] =
 "# TerminalMode: Off|Preedit. Mac dinh: Off\n"
 "# Cach xu ly client khai bao input-purpose TERMINAL.\n"
-"# Terminal khong khai purpose (nhu VS Code) tu dung Preedit an toan.\n"
+"# Client khong khai purpose (nhu VS Code) dung Preedit de khong tat nham input text.\n"
 "#   Off     : tat bo go, cho phim di thang\n"
 "#   Preedit : go tieng Viet bang vung soan thao trong suot\n";
 

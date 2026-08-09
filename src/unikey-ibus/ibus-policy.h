@@ -9,12 +9,13 @@
  * Thu tu la quan trong:
  *   - o bi mat khong bao gio duoc bo go can thiep;
  *   - terminal khai bao dung purpose phai theo TerminalMode;
- *   - thanh URL chi dung DIRECT khi client da xac nhan surrounding-text; nhu
- *     vay van go duoc tieng Viet de search ma khong vao composition/predict;
- *     Firefox/GTK khong map inputmode=mozAwesomebar sang purpose=URL. Khong
- *     duoc dung rieng UPPERCASE_SENTENCES de nhan no: input/textarea web cung
- *     co hint nay. Chi chap nhan chuoi rieng da quan sat o awesomebar:
- *     sentence-only -> NONE trong cung mot focus;
+ *   - input ALPHA/URL/EMAIL/NAME chi dung DIRECT khi client da xac nhan
+ *     surrounding-text; nhu vay go tieng Viet ma khong composition/predict;
+ *     Firefox/GTK khong map inputmode=mozAwesomebar sang purpose=URL. Cac o
+ *     nhap web/Electron co spellcheck/autocapitalize gui 0x40 hoac 0x41;
+ *     chon DIRECT ngay khi co surrounding de khong lo composition/predict.
+ *     FREE_FORM+hints=NONE giu PREEDIT vi IBus khong phan biet duoc
+ *     xterm.js voi input text;
  *   - moi context IBus con lai dung PREEDIT. Capability surrounding-text chi
  *     noi rang protocol co lenh xoa, khong dam bao no tro vao van ban that cua
  *     ung dung. VS Code/xterm.js la phan vi du: textarea an bao surrounding
@@ -28,64 +29,62 @@ typedef enum {
     UK_IBUS_MODE_DIRECT
 } UkIBusMode;
 
-/* Chromium co the gui URL roi tra ve FREE_FORM trong cung mot lan focus.
-   Purpose tuong minh khac thi bat dau context moi va bo latch. */
+/* Client co the gui purpose editable tuong minh roi tra ve FREE_FORM trong
+   cung mot focus. Giu latch cho ALPHA/URL/EMAIL/NAME; purpose khac xoa no. */
 static inline int
-uk_ibus_policy_update_url_latch(int saw_url, int is_url, int is_free_form)
+uk_ibus_policy_update_direct_purpose_latch(int saw_direct_purpose,
+                                           int is_direct_purpose,
+                                           int is_free_form)
 {
-    if (is_url)
+    if (is_direct_purpose)
         return 1;
     if (!is_free_form)
         return 0;
-    return saw_url;
+    return saw_direct_purpose;
 }
 
 typedef enum {
     UK_FIREFOX_ENTRY_NONE,
-    UK_FIREFOX_ENTRY_SENTENCE_ONLY,
     UK_FIREFOX_ENTRY_CONFIRMED,
     UK_FIREFOX_ENTRY_REJECTED
 } UkFirefoxEntryState;
 
-/* Firefox dung inputmode rieng "mozAwesomebar". GTK khong hieu gia tri nay,
-   nen IBus nhan FREE_FORM thay vi URL. Trace Firefox 153 Wayland co mot
-   handshake on dinh: hints=UPPERCASE_SENTENCES (0x40), sau do hints=NONE.
+/* Gia tri ABI cua IBusInputHints: SPELLCHECK=1<<0,
+   UPPERCASE_SENTENCES=1<<6. Tach helper de regression test khong can link
+   libibus. Chi chap nhan dung 0x40/0x41, khong gom tuy tien cac hint khac. */
+static inline int
+uk_ibus_policy_is_direct_text_hints(unsigned int hints)
+{
+    return hints == (1u << 6) || hints == ((1u << 6) | (1u << 0));
+}
 
-   UPPERCASE_SENTENCES mot minh KHONG phai dau van tay: input/textarea web
-   (nhat la autocapitalize/spellcheck) cung gui 0x40 hoac 0x41. Chi confirm sau
-   canh chuyen sentence-only -> none. Trong luc moi thay nua dau, giu PREEDIT;
-   khong nhay sang OFF/DIRECT giua am tiet. Hint khac va purpose tuong minh se
-   xoa candidate. CONFIRMED/REJECTED duoc latch den focus-out vi Firefox co
-   the lap lai set_content_type sau khi surrounding thay doi. */
+/* Firefox awesomebar va input/chat web/Electron deu co the gui 0x40/0x41.
+   Neu doi h0 moi confirm, phim dau tien van chay PREEDIT va tao predict; neu
+   chuyen mode muon thi control co the thay range giua mot tu. Vi vay hint
+   text-entry confirm candidate ngay. CONFIRMED/REJECTED duoc latch den
+   focus-out vi client co the lap lai set_content_type sau khi caps thay doi. */
 static inline UkFirefoxEntryState
 uk_ibus_policy_update_firefox_entry(UkFirefoxEntryState state,
                                     int is_free_form,
-                                    int is_sentence_only,
-                                    int has_no_hints)
+                                    int has_direct_text_hints)
 {
     if (!is_free_form)
         return UK_FIREFOX_ENTRY_NONE;
     if (state == UK_FIREFOX_ENTRY_CONFIRMED ||
         state == UK_FIREFOX_ENTRY_REJECTED)
         return state;
-    if (is_sentence_only)
-        return UK_FIREFOX_ENTRY_SENTENCE_ONLY;
-    if (state == UK_FIREFOX_ENTRY_SENTENCE_ONLY && has_no_hints)
+    if (has_direct_text_hints)
         return UK_FIREFOX_ENTRY_CONFIRMED;
-    if (state == UK_FIREFOX_ENTRY_SENTENCE_ONLY)
-        return UK_FIREFOX_ENTRY_REJECTED;
     return UK_FIREFOX_ENTRY_NONE;
 }
 
-/* Handshake awesomebar phai hoan tat TRUOC phim nhap dau tien. Trace thuc te
-   cua o chat Codex/Firefox cho thay no gui h0x40, nguoi dung go nhieu tu, roi
-   moi gui h0. Neu confirm muon, bridge doi PREEDIT -> DIRECT giua context va
-   co the replace theo van ban da commit. Latch REJECTED den focus-out. */
+/* Editing/BackSpace cua DIRECT candidate phai co surrounding truoc. Printable
+   key den som duoc engine ghi raw vao bridge va handoff rieng; cac thao tac
+   caret/range khong handoff an toan nen reject den focus-out. */
 static inline UkFirefoxEntryState
 uk_ibus_policy_note_input(UkFirefoxEntryState state, int direct_ready)
 {
-    return (state == UK_FIREFOX_ENTRY_SENTENCE_ONLY ||
-            (state == UK_FIREFOX_ENTRY_CONFIRMED && !direct_ready))
+    return (state == UK_FIREFOX_ENTRY_CONFIRMED && !direct_ready)
         ? UK_FIREFOX_ENTRY_REJECTED : state;
 }
 

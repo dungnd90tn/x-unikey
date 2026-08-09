@@ -165,18 +165,17 @@ thành công tắc toàn cục vì sẽ làm tái phát lỗi trình duyệt/ter
 ## 8. Hai chế độ commit — xem README mục 6
 
 IBus không dùng riêng `IBUS_CAP_SURROUNDING_TEXT` để bật DIRECT: VS Code/xterm.js cũng
-báo `caps=0x29` cho textarea ẩn dù đó không phải buffer của shell. Văn bản tự do dùng
-**PREEDIT** trong suốt; terminal khai đúng purpose thì theo `TerminalMode`. Riêng thanh
-địa chỉ được **DIRECT** sau khi surrounding-text đã xác nhận, nên vẫn gõ tiếng Việt để
-tìm kiếm mà không bật composition/predict của trình duyệt. Chromium báo purpose URL;
-Firefox dùng `mozAwesomebar` nhưng GTK hạ thành FREE_FORM. Engine chỉ nhận đó là
-thanh địa chỉ sau chuỗi UPPERCASE_SENTENCES-only (0x40) -> NONE trong cùng một
-focus; hint 0x40/0x41 đơn lẻ của input/textarea vẫn PREEDIT. Surrounding vẫn bắt
-buộc và password/terminal luôn được ưu tiên. IBus chốt preedit bằng
-`HidePreeditText -> CommitText` để Firefox/Electron không thấy composition range
-cũ trong lúc văn bản mới đã được commit. Nếu có phím nhập trước khi chuỗi
-0x40 -> NONE hoàn tất (như ô chat Codex), candidate bị loại đến focus-out để
-không chuyển PREEDIT -> DIRECT giữa câu.
+báo `caps=0x29` cho textarea ẩn dù đó không phải buffer của shell. Terminal khai
+đúng purpose theo `TerminalMode`. FREE_FORM+hints=0 giữ PREEDIT vì IBus không
+phân biệt được `input=text` với xterm.js. Thanh địa chỉ và chat/input web/Electron
+gửi h0x40 hoặc h0x41 được **DIRECT** ngay khi surrounding-text đã xác nhận;
+purpose tường minh ALPHA/URL/EMAIL/NAME cũng DIRECT. Nếu phím chữ đầu tiên đến
+trước surrounding (Tab/gõ nhanh), bridge ghi nhận raw key vào state UniKey rồi
+handoff sang DIRECT khi caps tới, không reset âm tiết và không khoá PREEDIT.
+Quy tắc này phủ Firefox `mozAwesomebar`, form web và ô chat add-on của VS Code.
+Password/terminal luôn được ưu tiên. IBus chốt preedit bằng
+`CommitText -> HidePreeditText`: commit vào composition range hiện tại rồi mới
+kết thúc presentation, đồng thời không gửi generic empty-preedit.
 
 Ba cách đã thử và thất bại (đừng làm lại) được ghi đầy đủ trong README mục 6 và CLAUDE.md.
 
