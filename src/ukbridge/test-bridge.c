@@ -198,6 +198,33 @@ static void check_direct(int im, const char *im_name,
     uk_bridge_free(b);
 }
 
+/* User Tab/go nhanh: raw key dau tien vao app truoc caps surrounding. Bridge
+   phai nho no, handoff sang DIRECT khong reset state, roi bien doi ca am tiet. */
+static void check_pending_direct_handoff(void)
+{
+    FakeField f;
+    UkBridge *b;
+
+    memset(&f, 0, sizeof(f));
+    strcpy(f.text, "d"); /* app da tu chen raw key vi engine tra PASS */
+    b = uk_bridge_new(&DirectVTable, &f);
+    uk_bridge_set_enabled(b, 1);
+    uk_bridge_set_input_method(b, UkTelex);
+    uk_bridge_note_passthrough_key(b, 'd', 0, 0);
+    uk_bridge_set_direct_mode(b, 1); /* caps surrounding den */
+    uk_bridge_key(b, 'd', 0, 0);
+    uk_bridge_key(b, 'a', 0, 0);
+    uk_bridge_key(b, 'j', 0, 0);
+
+    if (strcmp(f.text, "đạ") == 0)
+        printf("  ok   pending DIRECT handoff: raw d + daj -> %s\n", f.text);
+    else {
+        printf("  FAIL pending DIRECT handoff: got=%s expect=đạ\n", f.text);
+        Failures++;
+    }
+    uk_bridge_free(b);
+}
+
 /*----------------------------------------------------------------
   Doi che do giua chung.
 
@@ -280,7 +307,7 @@ static void check_ibus_policy_case(const char *name,
 
 static void check_ibus_policy(void)
 {
-    int url_latch;
+    int direct_purpose_latch;
     UkFirefoxEntryState firefox_entry;
     UkFirefoxEntryState trace_entry;
     UkFirefoxEntryState chat_entry;
@@ -305,20 +332,16 @@ static void check_ibus_policy(void)
     check_ibus_policy_case("URL bar no surrounding",
                            0, 0, 1, 1, 0, 1, UK_IBUS_MODE_OFF);
 
-    /* Firefox 153/GTK gui mozAwesomebar thanh p0+h0x40, roi h0. Phai thay
-       DU chuoi nay moi confirm. Mot input web chi co h0x40/0x41 van PREEDIT. */
+    /* Firefox awesomebar va chat/input web/Electron gui h0x40/0x41. Confirm
+       ngay de khong cho phim dau tien lot vao PREEDIT/predict. */
     firefox_entry = uk_ibus_policy_update_firefox_entry(
-        UK_FIREFOX_ENTRY_NONE, 1, 1, 0);
-    check_ibus_policy_case("Firefox hint dang pending",
-                           0, 0, 0, 1, 1, 1,
-                           UK_IBUS_MODE_PREEDIT);
-    firefox_entry = uk_ibus_policy_update_firefox_entry(
-        firefox_entry, 1, 0, 1);
-    check_ibus_policy_case("Firefox URL + surrounding",
+        UK_FIREFOX_ENTRY_NONE, 1,
+        uk_ibus_policy_is_direct_text_hints(0x40));
+    check_ibus_policy_case("text entry + surrounding",
                            0, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
                            1, 1, 1,
                            UK_IBUS_MODE_DIRECT);
-    check_ibus_policy_case("Firefox URL chua surrounding",
+    check_ibus_policy_case("text entry chua surrounding",
                            0, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
                            1, 0, 1,
                            UK_IBUS_MODE_OFF);
@@ -335,8 +358,9 @@ static void check_ibus_policy(void)
                            1, 1, 1,
                            UK_IBUS_MODE_OFF);
 
-    /* Replay dung thu tu da ghi trong debug.log cua Firefox 153 Wayland:
-       p0/h0,caps? -> caps0x9 -> h0x40 -> caps0x29 -> h0 -> focus reset. */
+    /* Replay Firefox Wayland: h0x40 co the den truoc caps surrounding. Candidate
+       vao OFF tam thoi, roi DIRECT ngay khi caps0x29 den; h0 sau do khong duoc
+       xoa latch. */
     trace_entry = UK_FIREFOX_ENTRY_NONE;
     trace_ok =
         uk_ibus_policy_choose(0, 0, 0, 0, 0, 1) ==
@@ -344,60 +368,60 @@ static void check_ibus_policy(void)
         uk_ibus_policy_choose(0, 0, 0, 1, 0, 1) ==
             UK_IBUS_MODE_PREEDIT;
     trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 1, 1, 0);
+        trace_entry, 1, uk_ibus_policy_is_direct_text_hints(0x40));
     trace_ok = trace_ok &&
-        trace_entry == UK_FIREFOX_ENTRY_SENTENCE_ONLY &&
-        uk_ibus_policy_choose(0, 0, 0, 1, 0, 1) ==
-            UK_IBUS_MODE_PREEDIT &&
-        uk_ibus_policy_choose(0, 0, 0, 1, 1, 1) ==
-            UK_IBUS_MODE_PREEDIT;
+        trace_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
+        uk_ibus_policy_choose(0, 0, 1, 1, 0, 1) ==
+            UK_IBUS_MODE_OFF &&
+        uk_ibus_policy_choose(0, 0, 1, 1, 1, 1) ==
+            UK_IBUS_MODE_DIRECT;
     trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 1, 0, 1);
+        trace_entry, 1, uk_ibus_policy_is_direct_text_hints(0));
     trace_ok = trace_ok &&
         trace_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
         uk_ibus_policy_choose(0, 0, 1, 1, 1, 1) ==
             UK_IBUS_MODE_DIRECT;
     trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 0, 0, 1);
+        trace_entry, 0, uk_ibus_policy_is_direct_text_hints(0));
     trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 1, 0, 1);
+        trace_entry, 1, uk_ibus_policy_is_direct_text_hints(0));
     trace_ok = trace_ok && trace_entry == UK_FIREFOX_ENTRY_NONE &&
         uk_ibus_policy_choose(0, 0, 0, 1, 1, 1) ==
             UK_IBUS_MODE_PREEDIT;
     if (trace_ok)
-        printf("  ok   policy Firefox trace: h0x40 -> h0 confirm -> reset\n");
+        printf("  ok   policy text-entry trace: h0x40 -> caps -> DIRECT\n");
     else {
-        printf("  FAIL policy Firefox trace\n");
+        printf("  FAIL policy text-entry trace\n");
         Failures++;
     }
 
-    /* Trace that cua o chat Codex trong Firefox: h0x40 -> surrounding, nguoi
-       dung go nhieu tu trong PREEDIT, sau do app moi gui h0. Day KHONG phai
-       awesomebar; input truoc confirm phai reject DIRECT den het focus. */
+    /* VS Code add-on chat gui h0x41 + surrounding: no la editable buffer that
+       va phai DIRECT. xterm.js h0 van duoc test PREEDIT o duoi. */
     chat_entry = uk_ibus_policy_update_firefox_entry(
-        UK_FIREFOX_ENTRY_NONE, 1, 1, 0);
-    chat_entry = uk_ibus_policy_note_input(chat_entry, 0);
-    chat_entry = uk_ibus_policy_update_firefox_entry(
-        chat_entry, 1, 0, 1);
-    if (chat_entry == UK_FIREFOX_ENTRY_REJECTED &&
-        uk_ibus_policy_choose(0, 0,
-                              chat_entry == UK_FIREFOX_ENTRY_CONFIRMED,
-                              1, 1, 1) == UK_IBUS_MODE_PREEDIT) {
-        printf("  ok   policy Firefox chat: input truoc h0 -> PREEDIT\n");
+        UK_FIREFOX_ENTRY_NONE, 1,
+        uk_ibus_policy_is_direct_text_hints(0x41));
+    if (chat_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
+        uk_ibus_policy_choose(0, 0, 1, 1, 1, 1) ==
+            UK_IBUS_MODE_DIRECT) {
+        printf("  ok   policy VS Code chat h0x41 -> DIRECT\n");
     } else {
-        printf("  FAIL policy Firefox chat late-confirm\n");
+        printf("  FAIL policy VS Code chat h0x41\n");
         Failures++;
     }
 
+    /* Editing/BackSpace truoc caps khong the handoff an toan vi caret/range
+       chua xac dinh: reject DIRECT den focus-out. Printable key duoc bridge
+       handoff rieng va test o check_pending_direct_handoff(). */
     chat_entry = uk_ibus_policy_update_firefox_entry(
-        UK_FIREFOX_ENTRY_SENTENCE_ONLY, 1, 0, 1);
+        UK_FIREFOX_ENTRY_NONE, 1,
+        uk_ibus_policy_is_direct_text_hints(0x41));
     chat_entry = uk_ibus_policy_note_input(chat_entry, 0);
     if (chat_entry == UK_FIREFOX_ENTRY_REJECTED &&
         uk_ibus_policy_note_input(UK_FIREFOX_ENTRY_CONFIRMED, 1) ==
             UK_FIREFOX_ENTRY_CONFIRMED) {
-        printf("  ok   policy Firefox: input truoc surrounding -> PREEDIT\n");
+        printf("  ok   policy text-entry: editing truoc caps -> PREEDIT\n");
     } else {
-        printf("  FAIL policy Firefox input-before-surrounding\n");
+        printf("  FAIL policy text-entry editing-before-caps\n");
         Failures++;
     }
 
@@ -405,9 +429,9 @@ static void check_ibus_policy(void)
     check_ibus_policy_case("capability chua biet",
                            0, 0, 0, 0, 0, 0, UK_IBUS_MODE_PREEDIT);
 
-    /* IBus caps khong chung minh duoc editable buffer. VS Code/xterm.js bao
-       surrounding qua textarea an nhung DIRECT lam hong du lieu PTY. */
-    check_ibus_policy_case("entry co surrounding",
+    /* FREE_FORM+h0+surrounding khong du phan biet input=text voi xterm.js,
+       nen generic text entry phai giu PREEDIT. */
+    check_ibus_policy_case("entry chua phan loai",
                            0, 0, 0, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
 
     /* Client khong khai purpose terminal cung phai dung PREEDIT an toan. */
@@ -420,34 +444,37 @@ static void check_ibus_policy(void)
     check_ibus_policy_case("password terminal",
                            1, 1, 0, 1, 1, 1, UK_IBUS_MODE_OFF);
 
-    url_latch = uk_ibus_policy_update_url_latch(0, 1, 0);
-    url_latch = uk_ibus_policy_update_url_latch(url_latch, 0, 1);
-    if (url_latch == 1 &&
-        uk_ibus_policy_update_url_latch(url_latch, 0, 0) == 0) {
-        printf("  ok   policy URL latch: URL -> FREE_FORM, reset explicit\n");
+    direct_purpose_latch = uk_ibus_policy_update_direct_purpose_latch(
+        0, 1, 0);
+    direct_purpose_latch = uk_ibus_policy_update_direct_purpose_latch(
+        direct_purpose_latch, 0, 1);
+    if (direct_purpose_latch == 1 &&
+        uk_ibus_policy_update_direct_purpose_latch(
+            direct_purpose_latch, 0, 0) == 0) {
+        printf("  ok   policy purpose latch: ALPHA/URL/EMAIL/NAME -> DIRECT\n");
     } else {
-        printf("  FAIL policy URL latch\n");
+        printf("  FAIL policy direct-purpose latch\n");
         Failures++;
     }
 
     if (firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
+        uk_ibus_policy_is_direct_text_hints(0x40) &&
+        uk_ibus_policy_is_direct_text_hints(0x41) &&
+        !uk_ibus_policy_is_direct_text_hints(0) &&
+        !uk_ibus_policy_is_direct_text_hints(0x42) &&
         uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_NONE, 1, 0, 1) == UK_FIREFOX_ENTRY_NONE &&
+            UK_FIREFOX_ENTRY_NONE, 1, 0) == UK_FIREFOX_ENTRY_NONE &&
         uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_NONE, 1, 0, 0) == UK_FIREFOX_ENTRY_NONE &&
+            UK_FIREFOX_ENTRY_NONE, 0, 1) == UK_FIREFOX_ENTRY_NONE &&
         uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_NONE, 0, 1, 0) == UK_FIREFOX_ENTRY_NONE &&
+            UK_FIREFOX_ENTRY_CONFIRMED, 1, 0) ==
+                UK_FIREFOX_ENTRY_CONFIRMED &&
         uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_SENTENCE_ONLY, 1, 0, 0) ==
-                UK_FIREFOX_ENTRY_REJECTED &&
-        uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_REJECTED, 1, 0, 1) ==
-                UK_FIREFOX_ENTRY_REJECTED &&
-        uk_ibus_policy_update_firefox_entry(
-            firefox_entry, 0, 0, 1) == UK_FIREFOX_ENTRY_NONE) {
-        printf("  ok   policy Firefox: chi h0x40 -> h0 moi confirm\n");
+            UK_FIREFOX_ENTRY_REJECTED, 1, 1) ==
+                UK_FIREFOX_ENTRY_REJECTED) {
+        printf("  ok   policy direct hints: chi 0x40/0x41, latch focus\n");
     } else {
-        printf("  FAIL policy Firefox handshake\n");
+        printf("  FAIL policy direct hints/latch\n");
         Failures++;
     }
 }
@@ -477,29 +504,29 @@ static void check_reset_cancels(void)
     uk_bridge_free(b);
 }
 
-static void fake_atomic_commit(void *user, const char *utf8)
+static void fake_frontend_commit_preedit(void *user, const char *utf8)
 {
     FakeEntry *e = (FakeEntry *)user;
 
-    /* Mo phong HidePreeditText -> CommitText cua IBus: frontend tu ket thuc
-       composition, bridge khong phat them empty-preedit sau callback nay. */
-    e->preedit[0] = '\0';
+    /* Mo phong CommitText -> HidePreeditText cua IBus. Commit phai nhin thay
+       composition hien tai; bridge khong phat empty-preedit quanh callback. */
     strncat(e->committed, utf8,
             sizeof(e->committed) - strlen(e->committed) - 1);
-    strncat(e->events, "A", sizeof(e->events) - strlen(e->events) - 1);
+    strncat(e->events, "C", sizeof(e->events) - strlen(e->events) - 1);
+    e->preedit[0] = '\0';
+    strncat(e->events, "H", sizeof(e->events) - strlen(e->events) - 1);
 }
 
-/* IBus phai dung callback atomic cho moi lan chot tu. Neu quay lai C->E thi
-   Firefox/Electron co the replace theo composition range cu ("dangắng"); neu
-   E->C thi xterm.js co the finalize roi nhan doi CommitText. */
-static void check_ibus_atomic_commit(void)
+/* IBus phai commit vao composition range dang ton tai, roi hide no. Khong
+   duoc chen generic empty-preedit (E) vi client co the finalize hai lan. */
+static void check_ibus_frontend_commit(void)
 {
     FakeEntry e;
     UkBridge *b;
     UkBridgeVTable vt = FakeVTable;
 
     memset(&e, 0, sizeof(e));
-    vt.commit_preedit = fake_atomic_commit;
+    vt.commit_preedit = fake_frontend_commit_preedit;
     b = uk_bridge_new(&vt, &e);
     uk_bridge_set_enabled(b, 1);
     uk_bridge_set_input_method(b, UkTelex);
@@ -507,12 +534,11 @@ static void check_ibus_atomic_commit(void)
 
     if (strcmp(e.committed, "đang ") == 0 &&
         strcmp(e.preedit, "") == 0 &&
-        strchr(e.events, 'A') != NULL &&
-        strchr(e.events, 'C') == NULL &&
+        strstr(e.events, "CH") != NULL &&
         strchr(e.events, 'E') == NULL) {
-        printf("  ok   IBus atomic preedit commit: khong lo stale range\n");
+        printf("  ok   IBus preedit commit: CommitText -> Hide, khong empty\n");
     } else {
-        printf("  FAIL IBus atomic commit: events=%s commit=%s preedit=%s\n",
+        printf("  FAIL IBus frontend commit: events=%s commit=%s preedit=%s\n",
                e.events, e.committed, e.preedit);
         Failures++;
     }
@@ -933,6 +959,7 @@ int main(void)
     /* DIRECT chi dung cho client da xac nhan delete-surrounding. Giu cac cau
        nay de bao dam nhanh do van dung sau khi policy loai VTE ra khoi no. */
     check_direct(UkTelex, "telex", "ddwowcj",        "được");
+    check_pending_direct_handoff();
     check_direct(UkTelex, "telex", "chuwa",          "chưa");
     check_direct(UkTelex, "telex", "naof",           "nào");
     check_direct(UkTelex, "telex", "xem ddwowcj chuwa naof", "xem được chưa nào");
@@ -940,7 +967,7 @@ int main(void)
     check_mode_switch();
     check_ibus_policy();
     check_reset_cancels();
-    check_ibus_atomic_commit();
+    check_ibus_frontend_commit();
     check_shared_state();
     check_options_do_not_reload_mid_composition();
 

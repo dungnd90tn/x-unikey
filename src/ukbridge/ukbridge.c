@@ -40,6 +40,7 @@ struct _UkBridge {
     int            inotify_wd;
 
     int            direct_mode;   /* commit thang thay vi dung preedit */
+    int            passthrough_pending; /* raw key da vao app, cho DIRECT */
     int            terminal_mode; /* UkTerminalOff | UkTerminalPreedit */
     int            user_keymap_loaded;
 };
@@ -138,6 +139,7 @@ UkBridge *uk_bridge_new(const UkBridgeVTable *vt, void *user_data)
        erase_before_cursor sua van ban that; capability protocol cua mot
        textarea an (VS Code/xterm.js) khong phai dam bao do. */
     b->direct_mode = 0;
+    b->passthrough_pending = 0;
     buf_init(&b->preedit);
     buf_init(&b->commit_buf);
     uk_bridge_load_config(b);
@@ -208,10 +210,9 @@ void uk_bridge_flush(UkBridge *b)
         char *s = strdup(b->preedit.data);
         buf_clear(&b->preedit);
         if (b->vt.commit_preedit) {
-            /* Cho frontend ket thuc composition mot cach nguyen tu.  Dac biet
-               IBus/Wayland khong duoc de client nhin thay CommitText trong
-               khi preedit cu van con, vi Electron/Firefox co the replace lai
-               sai vi tri va tao chu lap nhu "dangắng". */
+            /* Frontend tu chon dung signal va thu tu ket thuc composition.
+               IBus can CommitText vao range hien tai roi HidePreeditText;
+               bridge khong phat empty-preedit chung truoc/sau callback. */
             b->vt.commit_preedit(b->user_data, s);
         } else {
             emit_preedit(b);
@@ -219,6 +220,7 @@ void uk_bridge_flush(UkBridge *b)
         }
         free(s);
     }
+    b->passthrough_pending = 0;
     UnikeyResetBuf();
 }
 
@@ -228,12 +230,27 @@ void uk_bridge_reset(UkBridge *b)
         buf_clear(&b->preedit);
         emit_preedit(b);
     }
+    b->passthrough_pending = 0;
     UnikeyResetBuf();
 }
 
 const char *uk_bridge_preedit(UkBridge *b)
 {
     return b->preedit.data;
+}
+
+/* Mot text-entry DIRECT candidate co the nhan phim dau tien truoc khi IBus
+   cong bo SURROUNDING_TEXT. App tu chen raw key do; bridge chi dua no vao bo
+   dem UniKey bang pass(), khong emit gi. Khi caps toi va bat DIRECT, engine
+   van biet ky tu da nam truoc caret de lan bien doi sau xoa/thay dung cho. */
+void uk_bridge_note_passthrough_key(UkBridge *b, unsigned int unicode,
+                                    int shift_pressed, int capslock_on)
+{
+    if (!b->enabled || unicode == 0 || unicode > 0xFF)
+        return;
+    UnikeySetCapsState(shift_pressed, capslock_on);
+    UnikeyPutChar(unicode);
+    b->passthrough_pending = 1;
 }
 
 /*----------------------------------------------------------------*/
@@ -337,6 +354,13 @@ void uk_bridge_set_direct_mode(UkBridge *b, int on)
 {
     if (b->direct_mode == !!on)
         return;
+    if (on && b->passthrough_pending && b->preedit.len == 0) {
+        /* Raw key da nam trong app va trong bo dem UniKey. Khong flush/reset
+           luc handoff, neu khong am tiet se mat ky tu dau. */
+        b->direct_mode = 1;
+        b->passthrough_pending = 0;
+        return;
+    }
     uk_bridge_flush(b);      /* chot phan dang go truoc khi doi che do */
     b->direct_mode = !!on;
 }

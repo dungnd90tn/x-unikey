@@ -35,10 +35,10 @@ typedef struct {
     void (*preedit_changed)(void *user_data, const char *utf8);
     void (*erase_before_cursor)(void *user_data, int nchars);
 
-    /* Optional atomic end-of-composition operation.  IBus clients should
-       hide/end their preedit and commit through one frontend operation,
-       instead of exposing the intermediate states "committed text + stale
-       preedit" or "empty preedit before commit" to Electron/Firefox.
+    /* Optional frontend-owned end-of-composition operation.  IBus uses it to
+       emit CommitText -> HidePreeditText without a generic empty-preedit
+       update.  CommitText must target the current composition range before
+       Hide ends it; the empty update could make another client commit twice.
 
        DIRECT commits still use `commit`; this callback is only used when a
        non-empty PREEDIT buffer is flushed.  GTK/Qt modules may leave it NULL
@@ -68,6 +68,11 @@ void        uk_bridge_flush(UkBridge *b);   /* commit preedit dang co */
 void        uk_bridge_reset(UkBridge *b);   /* bo preedit, reset engine */
 const char *uk_bridge_preedit(UkBridge *b); /* luon khac NULL */
 
+/* Ghi nhan raw key ma app da tu chen trong luc DIRECT candidate dang cho
+   surrounding capability. Khong commit/preedit va khong nuot phim. */
+void uk_bridge_note_passthrough_key(UkBridge *b, unsigned int unicode,
+                                    int shift_pressed, int capslock_on);
+
 /*----------------------------------------------------------------
   Hai che do lam viec
  ----------------------------------------------------------------
@@ -87,9 +92,8 @@ const char *uk_bridge_preedit(UkBridge *b); /* luon khac NULL */
 void uk_bridge_set_direct_mode(UkBridge *b, int on);
 int  uk_bridge_get_direct_mode(UkBridge *b);
 
-/* Cach xu ly client khai bao input-purpose TERMINAL: UkTerminalOff hay
-   UkTerminalPreedit. Doc tu ~/.unikey/options, mac dinh Off. Client khong khai
-   purpose (vi du terminal VS Code) duoc IBus giu o PREEDIT an toan. */
+/* Cach xu ly client khai input-purpose TERMINAL: UkTerminalOff hay
+   UkTerminalPreedit. Client khong khai purpose duoc IBus giu PREEDIT. */
 int  uk_bridge_get_terminal_mode(UkBridge *b);
 
 int  uk_bridge_get_enabled(UkBridge *b);
