@@ -189,7 +189,7 @@ PREEDIT
 IBus engine chon che do theo input purpose cua tung o nhap:
 
     password/PIN          -> OFF
-    purpose=TERMINAL      -> theo TerminalMode       (gnome-terminal/VTE)
+    purpose=TERMINAL      -> theo TerminalMode       (latch den focus-out)
     purpose=ALPHA/URL/EMAIL/NAME + surrounding -> DIRECT
     FREE_FORM+h0x40/0x41+surrounding -> DIRECT         (Firefox/web/VS Code chat)
     FREE_FORM+h0+surrounding -> PREEDIT                (input text / xterm.js)
@@ -246,6 +246,10 @@ Client khai purpose=TERMINAL thi tuan theo `TerminalMode`:
 
     TerminalMode = Off       # mac dinh: tat bo go trong terminal
     TerminalMode = Preedit   # go tieng Viet, khong gach chan
+
+IBus/VTE tren Ubuntu 26.04 co the gui `purpose=TERMINAL` roi reset ve
+`FREE_FORM` trong cung focus. Engine latch TERMINAL den focus-out de lan reset
+metadata nay khong bat PREEDIT tro lai va ve chu tren mot dong terminal rieng.
 
 VS Code khong khai purpose TERMINAL va metadata IBus cua no giong `input=text`;
 vi vay no dung PREEDIT. Khong the tu dong ep OFF/DIRECT cho VS Code terminal

@@ -307,6 +307,7 @@ static void check_ibus_policy_case(const char *name,
 
 static void check_ibus_policy(void)
 {
+    int terminal_purpose_latch;
     int direct_purpose_latch;
     UkFirefoxEntryState firefox_entry;
     UkFirefoxEntryState trace_entry;
@@ -320,6 +321,25 @@ static void check_ibus_policy(void)
                            0, 1, 0, 1, 1, 0, UK_IBUS_MODE_OFF);
     check_ibus_policy_case("terminal off + no surrounding",
                            0, 1, 0, 1, 0, 0, UK_IBUS_MODE_OFF);
+
+    /* Ubuntu 26.04 / IBus 1.5.34: VTE co the gui TERMINAL roi FREE_FORM
+       trong cung focus. Terminal phai giu OFF; purpose cu the khac se xoa
+       latch neu client tai su dung context. */
+    terminal_purpose_latch =
+        uk_ibus_policy_update_terminal_purpose_latch(0, 1, 0);
+    terminal_purpose_latch =
+        uk_ibus_policy_update_terminal_purpose_latch(
+            terminal_purpose_latch, 0, 1);
+    if (terminal_purpose_latch &&
+        uk_ibus_policy_choose(0, terminal_purpose_latch, 0, 1, 1, 0) ==
+            UK_IBUS_MODE_OFF &&
+        !uk_ibus_policy_update_terminal_purpose_latch(
+            terminal_purpose_latch, 0, 0)) {
+        printf("  ok   policy terminal latch: TERMINAL -> FREE_FORM -> OFF\n");
+    } else {
+        printf("  FAIL policy terminal purpose latch\n");
+        Failures++;
+    }
 
     /* Chromium address bar khai purpose=URL (5): DIRECT de van go duoc tieng
        Viet khi search, nhung khong vao PREEDIT/predict. */

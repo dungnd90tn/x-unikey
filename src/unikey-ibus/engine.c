@@ -100,6 +100,7 @@ struct _UkIBusEngine {
     guint      hints;
     gboolean   preedit_visible;
     gboolean   capabilities_known;
+    gboolean   saw_terminal_purpose;
     gboolean   saw_direct_purpose;
     UkFirefoxEntryState firefox_entry;
     gboolean   focused;
@@ -500,7 +501,8 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
   hoac 0x41. Cho chung vao DIRECT ngay khi surrounding san sang de khong kich
   hoat composition/predict. FREE_FORM+hints=NONE van PREEDIT vi metadata IBus
   nay giong nhau tren input=text va xterm.js. Chi purpose=TERMINAL moi theo
-  TerminalMode va van co do uu tien truoc moi rule entry.
+  TerminalMode; latch no den focus-out vi IBus/VTE moi co the gui lai
+  FREE_FORM trong cung focus. Terminal van co do uu tien truoc moi rule entry.
  --------------------------------------------------------------------*/
 static const char *uk_ibus_mode_name(UkIBusMode mode)
 {
@@ -538,7 +540,7 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     if ((self->hints & IBUS_INPUT_HINT_HIDDEN_TEXT) != 0)
         is_secret = TRUE;
 #endif
-    is_terminal = self->purpose == IBUS_INPUT_PURPOSE_TERMINAL;
+    is_terminal = self->saw_terminal_purpose;
     is_direct_entry = self->saw_direct_purpose ||
         self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED;
     can_surround = (self->capabilities & IBUS_CAP_SURROUNDING_TEXT) != 0;
@@ -563,10 +565,11 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     }
 
     uk_log("engine=%p reason=%s focus=%s caps=%s0x%x purpose=%u hints=0x%x "
-           "purpose-entry=%s hint-entry=%s surrounding=%s -> %s%s",
+           "terminal-entry=%s purpose-entry=%s hint-entry=%s surrounding=%s -> %s%s",
            (void *)self, reason, self->focused ? "yes" : "no",
            self->capabilities_known ? "" : "?", self->capabilities,
            self->purpose, self->hints,
+           self->saw_terminal_purpose ? "yes" : "no",
            self->saw_direct_purpose ? "yes" : "no",
            uk_firefox_entry_name(self->firefox_entry),
            can_surround ? "yes" : "no",
@@ -583,6 +586,7 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     self->purpose = IBUS_INPUT_PURPOSE_FREE_FORM;
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = TRUE;
@@ -600,6 +604,7 @@ static void uk_ibus_engine_focus_out(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = FALSE;
@@ -636,6 +641,11 @@ static void uk_ibus_engine_set_content_type(IBusEngine *engine,
 
     self->purpose = purpose;
     self->hints = hints;
+    self->saw_terminal_purpose =
+        uk_ibus_policy_update_terminal_purpose_latch(
+            self->saw_terminal_purpose,
+            purpose == IBUS_INPUT_PURPOSE_TERMINAL,
+            purpose == IBUS_INPUT_PURPOSE_FREE_FORM);
     self->saw_direct_purpose = uk_ibus_policy_update_direct_purpose_latch(
         self->saw_direct_purpose,
         purpose == IBUS_INPUT_PURPOSE_ALPHA ||
@@ -671,6 +681,7 @@ static void uk_ibus_engine_disable(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = FALSE;
@@ -693,6 +704,7 @@ static void uk_ibus_engine_init(UkIBusEngine *self)
     self->purpose = IBUS_INPUT_PURPOSE_FREE_FORM;
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
     self->focused = FALSE;

@@ -43,6 +43,23 @@ uk_ibus_policy_update_direct_purpose_latch(int saw_direct_purpose,
     return saw_direct_purpose;
 }
 
+/* IBus/VTE co the khai purpose=TERMINAL dung, sau do gui lai FREE_FORM trong
+   cung mot focus (da quan sat tren Ubuntu 26.04 / IBus 1.5.34). Khong duoc de
+   lan reset metadata nay bat PREEDIT tro lai va ve composition tren dong moi.
+   Purpose cu the khac FREE_FORM se ket thuc latch de tranh mang nham sang mot
+   editable context neu client tai su dung input context ma khong focus-out. */
+static inline int
+uk_ibus_policy_update_terminal_purpose_latch(int saw_terminal_purpose,
+                                             int is_terminal_purpose,
+                                             int is_free_form)
+{
+    if (is_terminal_purpose)
+        return 1;
+    if (!is_free_form)
+        return 0;
+    return saw_terminal_purpose;
+}
+
 typedef enum {
     UK_FIREFOX_ENTRY_NONE,
     UK_FIREFOX_ENTRY_CONFIRMED,

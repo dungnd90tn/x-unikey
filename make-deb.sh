@@ -11,7 +11,7 @@ set -e
 umask 022
 
 VERSION="${VERSION:-1.0.4}"
-REVISION="${REVISION:-12}"
+REVISION="${REVISION:-13}"
 ARCH="$(dpkg --print-architecture)"
 PKG="x-unikey"
 OUT="release"
