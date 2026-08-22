@@ -2,6 +2,8 @@
 #ifndef UK_IBUS_POLICY_H
 #define UK_IBUS_POLICY_H
 
+#include <string.h>
+
 /*
  * Quy tac chon cach dua ket qua vao client duoc tach khoi engine.c de co the
  * test ma khong can khoi dong ibus-daemon.
@@ -28,6 +30,55 @@ typedef enum {
     UK_IBUS_MODE_PREEDIT,
     UK_IBUS_MODE_DIRECT
 } UkIBusMode;
+
+/* Policy duoc chia thanh profile co thu tu uu tien, thay vi de engine.c
+   chong cac special-case len nhau:
+
+     ZSH_TERMINAL  terminal tu shell-integration bao focus ro rang;
+     FIREFOX_WEB   Firefox/web/Electron text entry co direct-text hints;
+     GENERAL       purpose IBus chuan va fallback an toan.
+
+   Ten ZSH_TERMINAL noi cach profile duoc kich hoat, khong co nghia IBus co
+   the tu doc ten process zsh. Tren Wayland, shell-integration phai phat mot
+   focus event rieng vi xterm.js va input=text co metadata IBus giong nhau. */
+typedef enum {
+    UK_IBUS_PROFILE_GENERAL,
+    UK_IBUS_PROFILE_FIREFOX_WEB,
+    UK_IBUS_PROFILE_ZSH_TERMINAL
+} UkIBusProfile;
+
+static inline UkIBusProfile
+uk_ibus_policy_select_profile(int zsh_terminal_active,
+                              int firefox_web_entry)
+{
+    if (zsh_terminal_active)
+        return UK_IBUS_PROFILE_ZSH_TERMINAL;
+    if (firefox_web_entry)
+        return UK_IBUS_PROFILE_FIREFOX_WEB;
+    return UK_IBUS_PROFILE_GENERAL;
+}
+
+/* Noi dung ~/.unikey/profile-event do helper viet. Parser co y khong chap
+   nhan profile la/de them de mot file rac khong the ep engine sang OFF. */
+static inline int
+uk_ibus_policy_parse_profile_event(const char *text, int *zsh_active)
+{
+    if (!text || !zsh_active)
+        return 0;
+    if (strcmp(text, "profile=zsh\nstate=on\n") == 0) {
+        *zsh_active = 1;
+        return 1;
+    }
+    if (strcmp(text, "profile=zsh\nstate=off\n") == 0) {
+        *zsh_active = 0;
+        return 1;
+    }
+    if (strcmp(text, "profile=zsh\nstate=probe\n") == 0) {
+        *zsh_active = 2;
+        return 1;
+    }
+    return 0;
+}
 
 /* Client co the gui purpose editable tuong minh roi tra ve FREE_FORM trong
    cung mot focus. Giu latch cho ALPHA/URL/EMAIL/NAME; purpose khac xoa no. */

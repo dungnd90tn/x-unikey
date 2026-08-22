@@ -11,7 +11,7 @@ set -e
 umask 022
 
 VERSION="${VERSION:-1.0.4}"
-REVISION="${REVISION:-13}"
+REVISION="${REVISION:-14}"
 ARCH="$(dpkg --print-architecture)"
 PKG="x-unikey"
 OUT="release"
@@ -26,6 +26,7 @@ GTK4_BINVER="$(pkg-config gtk4 --variable=gtk_binary_version 2>/dev/null || echo
 ENGINE_DIR="/usr/libexec/ibus-unikey"
 COMPONENT_DIR="/usr/share/ibus/component"
 APPLICATIONS_DIR="/usr/share/applications"
+PROFILE_DIR="/usr/share/x-unikey"
 GTK3_DIR="/usr/lib/$MULTIARCH/gtk-3.0/$GTK3_BINVER/immodules"
 GTK4_DIR="/usr/lib/$MULTIARCH/gtk-4.0/$GTK4_BINVER/immodules"
 QT6_DIR="/usr/lib/$MULTIARCH/qt6/plugins/platforminputcontexts"
@@ -62,6 +63,9 @@ install -Dm755 "$SETUP_BIN"  "$STAGE$ENGINE_DIR/ibus-setup-unikey"
 install -Dm755 "$GTK3_SO"    "$STAGE$GTK3_DIR/im-unikey.so"
 install -Dm755 "$GTK4_SO"    "$STAGE$GTK4_DIR/libim-unikey.so"
 install -Dm755 "$QT6_SO"     "$STAGE$QT6_DIR/libunikeyplatforminputcontextplugin.so"
+install -Dm755 integration/unikey-profile "$STAGE/usr/bin/unikey-profile"
+install -Dm644 integration/profile-zsh.zsh \
+    "$STAGE$PROFILE_DIR/profile-zsh.zsh"
 
 # Component XML: duong dan <exec> phai tro dung cho engine trong goi
 mkdir -p "$STAGE$COMPONENT_DIR"
@@ -143,6 +147,7 @@ Description: Bo go tieng Viet UniKey cho X11 va Wayland
                    go duoc trong ca VSCode va cac ung dung Electron/GTK4
                    chay tren Wayland
   * Cua so setup - Telex/VNI/VIQR, terminal mode, dat dau va spell-check
+  * Profile zsh  - tat/preedit dung rieng terminal, khong anh huong VSCode chat
   * Module GTK3 va GTK4
   * Plugin Qt6
  .
@@ -177,6 +182,8 @@ case "$1" in
         echo "     -> \"Vietnamese (UniKey)\""
         echo "  3. Chuyen bo go bang Super-Space"
         echo "  4. Menu VN -> Cai dat... de chon kieu go va cac tuy chon"
+        echo "  5. Neu dung zsh trong VS Code terminal, them vao ~/.zshrc:"
+        echo "     source /usr/share/x-unikey/profile-zsh.zsh"
         echo ""
         ;;
 esac

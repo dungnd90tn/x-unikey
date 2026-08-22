@@ -313,6 +313,31 @@ static void check_ibus_policy(void)
     UkFirefoxEntryState trace_entry;
     UkFirefoxEntryState chat_entry;
     int trace_ok;
+    int zsh_active = -1;
+
+    if (uk_ibus_policy_select_profile(0, 0) == UK_IBUS_PROFILE_GENERAL &&
+        uk_ibus_policy_select_profile(0, 1) == UK_IBUS_PROFILE_FIREFOX_WEB &&
+        uk_ibus_policy_select_profile(1, 1) ==
+            UK_IBUS_PROFILE_ZSH_TERMINAL) {
+        printf("  ok   policy profile priority: zsh > firefox > general\n");
+    } else {
+        printf("  FAIL policy profile priority\n");
+        Failures++;
+    }
+
+    if (uk_ibus_policy_parse_profile_event(
+            "profile=zsh\nstate=on\n", &zsh_active) && zsh_active == 1 &&
+        uk_ibus_policy_parse_profile_event(
+            "profile=zsh\nstate=off\n", &zsh_active) && zsh_active == 0 &&
+        uk_ibus_policy_parse_profile_event(
+            "profile=zsh\nstate=probe\n", &zsh_active) && zsh_active == 2 &&
+        !uk_ibus_policy_parse_profile_event(
+            "profile=unknown\nstate=on\n", &zsh_active)) {
+        printf("  ok   policy zsh profile event parser\n");
+    } else {
+        printf("  FAIL policy zsh profile event parser\n");
+        Failures++;
+    }
 
     /* VTE: purpose terminal thang caps 0x29 gia, nhung van ton trong option. */
     check_ibus_policy_case("terminal preedit + caps gia",

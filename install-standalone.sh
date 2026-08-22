@@ -31,6 +31,8 @@ IBUS_XML="src/unikey-ibus/unikey.xml"
 IBUS_LIBEXEC="/usr/local/libexec"
 IBUS_COMPONENT="/usr/share/ibus/component"
 IBUS_APPLICATIONS="/usr/share/applications"
+PROFILE_HELPER="/usr/local/bin/unikey-profile"
+PROFILE_ZSH="/usr/local/share/x-unikey/profile-zsh.zsh"
 
 ENVFILE="$REAL_HOME/.config/environment.d/unikey.conf"
 LEGACY_AUTOSTART="$REAL_HOME/.config/autostart/unikey.desktop"
@@ -91,6 +93,10 @@ do_install() {
                                                              && say "  Qt6  -> $QT6_DIR/"
     refresh_gtk3_cache
 
+    install -Dm755 integration/unikey-profile "$PROFILE_HELPER"
+    install -Dm644 integration/profile-zsh.zsh "$PROFILE_ZSH"
+    say "  Profile zsh -> $PROFILE_ZSH"
+
     # IBus engine: day moi la thu hien trong Settings -> Input Sources.
     if [ -f "$IBUS_BIN" ] && [ -f "$IBUS_XML" ]; then
         say ""
@@ -145,6 +151,7 @@ EOF
     say ""
     say "Ctrl-Shift bat/tat, Ctrl-Shift-F5..F8 doi kieu go."
     say "Cau hinh: ~/.unikey/options   Trang thai dung chung: ~/.unikey/state"
+    say "Zsh terminal: them vao ~/.zshrc: source $PROFILE_ZSH"
 }
 
 do_remove() {
@@ -156,7 +163,9 @@ do_remove() {
              "$IBUS_LIBEXEC/ibus-engine-unikey" \
              "$IBUS_LIBEXEC/ibus-setup-unikey" \
              "$IBUS_APPLICATIONS/ibus-setup-unikey.desktop" \
-             "$IBUS_COMPONENT/unikey.xml" ; do
+             "$IBUS_COMPONENT/unikey.xml" \
+             "$PROFILE_HELPER" \
+             "$PROFILE_ZSH" ; do
         if [ -f "$f" ]; then
             rm -f "$f" && say "  xoa $f"
         fi

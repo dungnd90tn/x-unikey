@@ -150,6 +150,10 @@ dat dau tu do, kieu dat dau, kiem tra chinh ta, tu khoi phuc tu ngoai, macro
 va keymap rieng. Bang ma hien dai co dinh la Unicode (UTF-8): IBus/Wayland
 khong the commit an toan byte TCVN/VNI legacy.
 
+Policy IBus gom ba profile: general, firefox/web va zsh-terminal. General va
+firefox/web tu nhan metadata; zsh-terminal can shell integration vi VS Code
+khong khai input-purpose TERMINAL. Xem muc 6.
+
 DIRECT/PREEDIT/OFF la che do tu dong theo tung o nhap, khong phai cong tac
 toan cuc. Cau hinh duoc ghi nguyen tu vao `~/.unikey/options`, giu ban cu dau
 tien o `~/.unikey/options.bak`. Kieu go va trang thai bat/tat co hieu luc ngay;
@@ -186,14 +190,15 @@ PREEDIT
     Trong terminal IBus no khong co gach chan, nhin nhu chu thuong nhung
     khong can VTE xoa lai van ban da commit.
 
-IBus engine chon che do theo input purpose cua tung o nhap:
+IBus engine chon che do theo profile co thu tu uu tien:
 
-    password/PIN          -> OFF
-    purpose=TERMINAL      -> theo TerminalMode       (latch den focus-out)
-    purpose=ALPHA/URL/EMAIL/NAME + surrounding -> DIRECT
-    FREE_FORM+h0x40/0x41+surrounding -> DIRECT         (Firefox/web/VS Code chat)
-    FREE_FORM+h0+surrounding -> PREEDIT                (input text / xterm.js)
-    moi context con lai   -> PREEDIT trong suot       (app)
+    zsh-terminal          -> theo TerminalMode       (focus do zsh integration bao)
+    firefox-web           -> DIRECT                  (h0x40/0x41 + surrounding)
+    general/password/PIN  -> OFF
+    general/TERMINAL      -> theo TerminalMode       (latch den focus-out)
+    general/ALPHA/URL/EMAIL/NAME + surrounding -> DIRECT
+    general/FREE_FORM+h0  -> PREEDIT                 (input text / xterm.js)
+    general/con lai       -> PREEDIT trong suot
 
 `IBUS_CAP_SURROUNDING_TEXT` chi noi rang client co mot buffer protocol, khong
 chung minh buffer do la van ban nguoi dung dang sua. VS Code/xterm.js la phan
@@ -212,8 +217,8 @@ vao state UniKey; khi caps toi, handoff sang DIRECT ma khong reset am tiet.
 Editing/BackSpace truoc caps moi reject candidate vi chua biet caret/range.
 Surrounding van bat buoc, password/terminal duoc uu tien truoc. FREE_FORM +
 surrounding + hints=0 khong du phan biet `input=text` voi textarea an cua
-xterm.js, nen giu PREEDIT va khong vao DIRECT/delete-surrounding. Chi client
-khai `purpose=TERMINAL` moi theo `TerminalMode`.
+xterm.js, nen profile general giu PREEDIT va khong vao DIRECT. Profile zsh
+khong doan tu caps: no nhan focus event ro rang tu shell integration.
 
 Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
 
@@ -251,9 +256,17 @@ IBus/VTE tren Ubuntu 26.04 co the gui `purpose=TERMINAL` roi reset ve
 `FREE_FORM` trong cung focus. Engine latch TERMINAL den focus-out de lan reset
 metadata nay khong bat PREEDIT tro lai va ve chu tren mot dong terminal rieng.
 
-VS Code khong khai purpose TERMINAL va metadata IBus cua no giong `input=text`;
-vi vay no dung PREEDIT. Khong the tu dong ep OFF/DIRECT cho VS Code terminal
-ma khong tat hoac lam hong form web cung metadata.
+VS Code khong khai purpose TERMINAL va metadata IBus cua no giong `input=text`.
+De profile zsh bao focus terminal ma khong anh huong chat/form, them dung mot
+dong vao `~/.zshrc`, sau do mo terminal zsh moi:
+
+    source /usr/share/x-unikey/profile-zsh.zsh
+
+Integration bat focus-reporting chi khi ZLE dang doc command line, va tat no
+truoc khi chay command de escape focus khong lot vao stdin cua chuong trinh con.
+Helper `unikey-profile` ghi event nguyen tu vao `~/.unikey/profile-event`;
+engine chi latch event cho context dang focus va xoa latch khi focus-out, nen
+file cu khong the lam terminal/chat tiep theo nhan nham profile.
 
 Go roi: touch ~/.unikey/debug && ibus restart
         cat ~/.unikey/debug.log        (in instance, focus, purpose, caps, mode)
