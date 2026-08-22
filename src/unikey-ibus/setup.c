@@ -550,7 +550,7 @@ static void build_dialog(SetupApp *app)
                                 GTK_STYLE_CLASS_DIM_LABEL);
     gtk_grid_attach(GTK_GRID(grid), label, 1, row++, 1, 1);
 
-    label = gtk_label_new_with_mnemonic("Terminal khai báo đúng _loại:");
+    label = gtk_label_new_with_mnemonic("Profile _terminal / zsh:");
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     app->terminal_combo = GTK_COMBO_BOX_TEXT(gtk_combo_box_text_new());
     gtk_combo_box_text_append(app->terminal_combo, "OFF", "Tắt bộ gõ");
@@ -567,11 +567,10 @@ static void build_dialog(SetupApp *app)
 
     mode_box = gtk_frame_new("Chế độ xử lý: Tự động");
     mode_text = gtk_label_new(
-        "UniKey tự chọn theo ô nhập: thanh địa chỉ Chromium/Firefox đã xác "
-        "nhận dùng Direct; ô nhập thông thường (kể cả input Firefox và "
-        "terminal VS Code báo FREE_FORM) dùng Preedit. "
-        "Tuỳ chọn terminal ở trên chỉ áp dụng khi ứng dụng khai báo purpose "
-        "TERMINAL. Không ép Direct toàn cục để tránh lỗi trong terminal.");
+        "Profile general xử lý purpose IBus chuẩn; profile firefox/web dùng "
+        "Direct cho address bar, chat và text entry đã xác nhận; profile zsh "
+        "dùng tuỳ chọn terminal ở trên. VS Code không khai purpose TERMINAL, "
+        "nên zsh cần source /usr/share/x-unikey/profile-zsh.zsh trong ~/.zshrc.");
     gtk_label_set_line_wrap(GTK_LABEL(mode_text), TRUE);
     gtk_label_set_xalign(GTK_LABEL(mode_text), 0.0f);
     gtk_widget_set_margin_start(mode_text, 9);

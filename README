@@ -94,6 +94,16 @@ Co hai cach. CHI DUNG MOT, dung ca hai se de lai file mo coi.
     ./make-deb.sh
     sudo dpkg -i release/x-unikey_*.deb
 
+    Neu dung zsh trong VS Code terminal, bat integration MOT LAN cho tai khoan
+    hien tai, sau do mo shell moi:
+
+        grep -qxF 'source /usr/share/x-unikey/profile-zsh.zsh' ~/.zshrc || \
+            printf '\nsource /usr/share/x-unikey/profile-zsh.zsh\n' >> ~/.zshrc
+        exec zsh
+
+    Goi .deb co cai integration nhung KHONG tu sua ~/.zshrc. Sau khi da them
+    dong source thi nang cap cac ban x-unikey sau khong can them lai.
+
     Cai vao /usr, do dpkg quan ly, go sach bang:
         sudo apt remove x-unikey
 
@@ -150,6 +160,13 @@ dat dau tu do, kieu dat dau, kiem tra chinh ta, tu khoi phuc tu ngoai, macro
 va keymap rieng. Bang ma hien dai co dinh la Unicode (UTF-8): IBus/Wayland
 khong the commit an toan byte TCVN/VNI legacy.
 
+Policy IBus gom ba profile: general, firefox/web va zsh-terminal. Nguoi dung
+khong chon profile bang tay moi lan: engine tu chuyen theo o dang focus.
+General va firefox/web hoat dong ngay sau khi cai; zsh-terminal chi tu chuyen
+sau khi integration da duoc source MOT LAN trong ~/.zshrc. Neu chua source,
+VS Code terminal van bi xep vao general/PREEDIT vi no khong khai purpose
+TERMINAL. Xem muc 6.
+
 DIRECT/PREEDIT/OFF la che do tu dong theo tung o nhap, khong phai cong tac
 toan cuc. Cau hinh duoc ghi nguyen tu vao `~/.unikey/options`, giu ban cu dau
 tien o `~/.unikey/options.bak`. Kieu go va trang thai bat/tat co hieu luc ngay;
@@ -186,14 +203,15 @@ PREEDIT
     Trong terminal IBus no khong co gach chan, nhin nhu chu thuong nhung
     khong can VTE xoa lai van ban da commit.
 
-IBus engine chon che do theo input purpose cua tung o nhap:
+IBus engine chon che do theo profile co thu tu uu tien:
 
-    password/PIN          -> OFF
-    purpose=TERMINAL      -> theo TerminalMode       (gnome-terminal/VTE)
-    purpose=ALPHA/URL/EMAIL/NAME + surrounding -> DIRECT
-    FREE_FORM+h0x40/0x41+surrounding -> DIRECT         (Firefox/web/VS Code chat)
-    FREE_FORM+h0+surrounding -> PREEDIT                (input text / xterm.js)
-    moi context con lai   -> PREEDIT trong suot       (app)
+    zsh-terminal          -> theo TerminalMode       (focus do zsh integration bao)
+    firefox-web           -> DIRECT                  (h0x40/0x41 + surrounding)
+    general/password/PIN  -> OFF
+    general/TERMINAL      -> theo TerminalMode       (latch den focus-out)
+    general/ALPHA/URL/EMAIL/NAME + surrounding -> DIRECT
+    general/FREE_FORM+h0  -> PREEDIT                 (input text / xterm.js)
+    general/con lai       -> PREEDIT trong suot
 
 `IBUS_CAP_SURROUNDING_TEXT` chi noi rang client co mot buffer protocol, khong
 chung minh buffer do la van ban nguoi dung dang sua. VS Code/xterm.js la phan
@@ -212,8 +230,8 @@ vao state UniKey; khi caps toi, handoff sang DIRECT ma khong reset am tiet.
 Editing/BackSpace truoc caps moi reject candidate vi chua biet caret/range.
 Surrounding van bat buoc, password/terminal duoc uu tien truoc. FREE_FORM +
 surrounding + hints=0 khong du phan biet `input=text` voi textarea an cua
-xterm.js, nen giu PREEDIT va khong vao DIRECT/delete-surrounding. Chi client
-khai `purpose=TERMINAL` moi theo `TerminalMode`.
+xterm.js, nen profile general giu PREEDIT va khong vao DIRECT. Profile zsh
+khong doan tu caps: no nhan focus event ro rang tu shell integration.
 
 Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
 
@@ -247,9 +265,33 @@ Client khai purpose=TERMINAL thi tuan theo `TerminalMode`:
     TerminalMode = Off       # mac dinh: tat bo go trong terminal
     TerminalMode = Preedit   # go tieng Viet, khong gach chan
 
-VS Code khong khai purpose TERMINAL va metadata IBus cua no giong `input=text`;
-vi vay no dung PREEDIT. Khong the tu dong ep OFF/DIRECT cho VS Code terminal
-ma khong tat hoac lam hong form web cung metadata.
+IBus/VTE tren Ubuntu 26.04 co the gui `purpose=TERMINAL` roi reset ve
+`FREE_FORM` trong cung focus. Engine latch TERMINAL den focus-out de lan reset
+metadata nay khong bat PREEDIT tro lai va ve chu tren mot dong terminal rieng.
+
+KICH HOAT PROFILE ZSH (MOT LAN)
+
+VS Code khong khai purpose TERMINAL va metadata IBus cua no giong `input=text`.
+Vi vay x-unikey khong the tu nhan terminal VS Code chi tu metadata IBus. Goi
+.deb chi cai file integration; no co y KHONG sua file nguoi dung khi dpkg dang
+chay bang root. Moi tai khoan dung zsh can them dung mot dong vao `~/.zshrc`:
+
+    source /usr/share/x-unikey/profile-zsh.zsh
+
+Neu cai bang `install-standalone.sh`, duong dan la:
+
+    source /usr/local/share/x-unikey/profile-zsh.zsh
+
+Sau do chay `exec zsh` hoac mo terminal moi. Day la buoc kich hoat mot lan,
+khong phai chon profile thu cong: tu luc do engine tu chuyen zsh-terminal khi
+focus terminal, firefox-web khi focus address bar/chat, va general o noi khac.
+Neu bo qua buoc nay, terminal tich hop VS Code se tiep tuc dung PREEDIT.
+
+Integration bat focus-reporting chi khi ZLE dang doc command line, va tat no
+truoc khi chay command de escape focus khong lot vao stdin cua chuong trinh con.
+Helper `unikey-profile` ghi event nguyen tu vao `~/.unikey/profile-event`;
+engine chi latch event cho context dang focus va xoa latch khi focus-out, nen
+file cu khong the lam terminal/chat tiep theo nhan nham profile.
 
 Go roi: touch ~/.unikey/debug && ibus restart
         cat ~/.unikey/debug.log        (in instance, focus, purpose, caps, mode)

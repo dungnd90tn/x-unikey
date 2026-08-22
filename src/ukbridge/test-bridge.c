@@ -307,11 +307,37 @@ static void check_ibus_policy_case(const char *name,
 
 static void check_ibus_policy(void)
 {
+    int terminal_purpose_latch;
     int direct_purpose_latch;
     UkFirefoxEntryState firefox_entry;
     UkFirefoxEntryState trace_entry;
     UkFirefoxEntryState chat_entry;
     int trace_ok;
+    int zsh_active = -1;
+
+    if (uk_ibus_policy_select_profile(0, 0) == UK_IBUS_PROFILE_GENERAL &&
+        uk_ibus_policy_select_profile(0, 1) == UK_IBUS_PROFILE_FIREFOX_WEB &&
+        uk_ibus_policy_select_profile(1, 1) ==
+            UK_IBUS_PROFILE_ZSH_TERMINAL) {
+        printf("  ok   policy profile priority: zsh > firefox > general\n");
+    } else {
+        printf("  FAIL policy profile priority\n");
+        Failures++;
+    }
+
+    if (uk_ibus_policy_parse_profile_event(
+            "profile=zsh\nstate=on\n", &zsh_active) && zsh_active == 1 &&
+        uk_ibus_policy_parse_profile_event(
+            "profile=zsh\nstate=off\n", &zsh_active) && zsh_active == 0 &&
+        uk_ibus_policy_parse_profile_event(
+            "profile=zsh\nstate=probe\n", &zsh_active) && zsh_active == 2 &&
+        !uk_ibus_policy_parse_profile_event(
+            "profile=unknown\nstate=on\n", &zsh_active)) {
+        printf("  ok   policy zsh profile event parser\n");
+    } else {
+        printf("  FAIL policy zsh profile event parser\n");
+        Failures++;
+    }
 
     /* VTE: purpose terminal thang caps 0x29 gia, nhung van ton trong option. */
     check_ibus_policy_case("terminal preedit + caps gia",
@@ -320,6 +346,25 @@ static void check_ibus_policy(void)
                            0, 1, 0, 1, 1, 0, UK_IBUS_MODE_OFF);
     check_ibus_policy_case("terminal off + no surrounding",
                            0, 1, 0, 1, 0, 0, UK_IBUS_MODE_OFF);
+
+    /* Ubuntu 26.04 / IBus 1.5.34: VTE co the gui TERMINAL roi FREE_FORM
+       trong cung focus. Terminal phai giu OFF; purpose cu the khac se xoa
+       latch neu client tai su dung context. */
+    terminal_purpose_latch =
+        uk_ibus_policy_update_terminal_purpose_latch(0, 1, 0);
+    terminal_purpose_latch =
+        uk_ibus_policy_update_terminal_purpose_latch(
+            terminal_purpose_latch, 0, 1);
+    if (terminal_purpose_latch &&
+        uk_ibus_policy_choose(0, terminal_purpose_latch, 0, 1, 1, 0) ==
+            UK_IBUS_MODE_OFF &&
+        !uk_ibus_policy_update_terminal_purpose_latch(
+            terminal_purpose_latch, 0, 0)) {
+        printf("  ok   policy terminal latch: TERMINAL -> FREE_FORM -> OFF\n");
+    } else {
+        printf("  FAIL policy terminal purpose latch\n");
+        Failures++;
+    }
 
     /* Chromium address bar khai purpose=URL (5): DIRECT de van go duoc tieng
        Viet khi search, nhung khong vao PREEDIT/predict. */

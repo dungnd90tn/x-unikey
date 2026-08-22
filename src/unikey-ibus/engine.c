@@ -23,6 +23,7 @@
 #endif
 
 #include <ibus.h>
+#include <gio/gio.h>
 #include <glib-unix.h>
 #include <string.h>
 #include <stdio.h>
@@ -95,13 +96,18 @@ struct _UkIBusEngine {
     IBusProperty *prop_vni;
     IBusProperty *prop_viqr;
     guint      state_source;
+    GFileMonitor *profile_monitor;
+    char      *profile_event_path;
     guint      capabilities;
     guint      purpose;
     guint      hints;
     gboolean   preedit_visible;
     gboolean   capabilities_known;
+    gboolean   saw_terminal_purpose;
     gboolean   saw_direct_purpose;
     UkFirefoxEntryState firefox_entry;
+    gboolean   zsh_terminal_active;
+    gint64     focus_in_time;
     gboolean   focused;
     gboolean   mode_applied;
     UkIBusMode mode;
@@ -500,7 +506,8 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
   hoac 0x41. Cho chung vao DIRECT ngay khi surrounding san sang de khong kich
   hoat composition/predict. FREE_FORM+hints=NONE van PREEDIT vi metadata IBus
   nay giong nhau tren input=text va xterm.js. Chi purpose=TERMINAL moi theo
-  TerminalMode va van co do uu tien truoc moi rule entry.
+  TerminalMode; latch no den focus-out vi IBus/VTE moi co the gui lai
+  FREE_FORM trong cung focus. Terminal van co do uu tien truoc moi rule entry.
  --------------------------------------------------------------------*/
 static const char *uk_ibus_mode_name(UkIBusMode mode)
 {
@@ -522,6 +529,16 @@ static const char *uk_firefox_entry_name(UkFirefoxEntryState state)
     return "?";
 }
 
+static const char *uk_ibus_profile_name(UkIBusProfile profile)
+{
+    switch (profile) {
+    case UK_IBUS_PROFILE_GENERAL:      return "general";
+    case UK_IBUS_PROFILE_FIREFOX_WEB:  return "firefox-web";
+    case UK_IBUS_PROFILE_ZSH_TERMINAL: return "zsh-terminal";
+    }
+    return "?";
+}
+
 static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
 {
     gboolean is_secret;
@@ -529,6 +546,7 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     gboolean is_direct_entry;
     gboolean can_surround;
     gboolean fallback_preedit;
+    UkIBusProfile profile;
     UkIBusMode old_mode;
     UkIBusMode new_mode;
 
@@ -538,9 +556,13 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     if ((self->hints & IBUS_INPUT_HINT_HIDDEN_TEXT) != 0)
         is_secret = TRUE;
 #endif
-    is_terminal = self->purpose == IBUS_INPUT_PURPOSE_TERMINAL;
+    profile = uk_ibus_policy_select_profile(
+        self->zsh_terminal_active,
+        self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED);
+    is_terminal = self->saw_terminal_purpose ||
+        profile == UK_IBUS_PROFILE_ZSH_TERMINAL;
     is_direct_entry = self->saw_direct_purpose ||
-        self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED;
+        profile == UK_IBUS_PROFILE_FIREFOX_WEB;
     can_surround = (self->capabilities & IBUS_CAP_SURROUNDING_TEXT) != 0;
     fallback_preedit =
         uk_bridge_get_terminal_mode(self->bridge) == UkTerminalPreedit;
@@ -562,15 +584,111 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
         self->mode_applied = TRUE;
     }
 
-    uk_log("engine=%p reason=%s focus=%s caps=%s0x%x purpose=%u hints=0x%x "
-           "purpose-entry=%s hint-entry=%s surrounding=%s -> %s%s",
-           (void *)self, reason, self->focused ? "yes" : "no",
+    uk_log("engine=%p reason=%s profile=%s focus=%s caps=%s0x%x purpose=%u hints=0x%x "
+           "terminal-entry=%s purpose-entry=%s hint-entry=%s surrounding=%s -> %s%s",
+           (void *)self, reason, uk_ibus_profile_name(profile),
+           self->focused ? "yes" : "no",
            self->capabilities_known ? "" : "?", self->capabilities,
            self->purpose, self->hints,
+           self->saw_terminal_purpose ? "yes" : "no",
            self->saw_direct_purpose ? "yes" : "no",
            uk_firefox_entry_name(self->firefox_entry),
            can_surround ? "yes" : "no",
            uk_ibus_mode_name(new_mode), self->focused ? "" : " (deferred)");
+}
+
+static gboolean uk_profile_event_matches(UkIBusEngine *self, GFile *file)
+{
+    char *path;
+    gboolean matches;
+
+    if (!file || !self->profile_event_path)
+        return FALSE;
+    path = g_file_get_path(file);
+    matches = path && strcmp(path, self->profile_event_path) == 0;
+    g_free(path);
+    return matches;
+}
+
+/* profile-event la event, khong phai state ben vung. Engine chi ap event ON
+   cho context dang focus va luon xoa latch khi focus-out. Nhu vay mot terminal
+   bi kill khong the de lai zsh profile cho chat/form cua lan focus sau. */
+static void uk_ibus_engine_profile_changed(GFileMonitor *monitor,
+                                           GFile *file,
+                                           GFile *other_file,
+                                           GFileMonitorEvent event,
+                                           gpointer data)
+{
+    UkIBusEngine *self = (UkIBusEngine *)data;
+    char *contents = NULL;
+    gsize length = 0;
+    int active;
+
+    (void)monitor;
+    if (event != G_FILE_MONITOR_EVENT_CREATED &&
+        event != G_FILE_MONITOR_EVENT_MOVED_IN &&
+        event != G_FILE_MONITOR_EVENT_RENAMED &&
+        event != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT)
+        return;
+    if (!uk_profile_event_matches(self, file) &&
+        !uk_profile_event_matches(self, other_file))
+        return;
+    if (!g_file_get_contents(self->profile_event_path, &contents, &length,
+                             NULL))
+        return;
+    if (!uk_ibus_policy_parse_profile_event(contents, &active)) {
+        uk_log("engine=%p profile-event invalid length=%lu", (void *)self,
+               (unsigned long)length);
+        g_free(contents);
+        return;
+    }
+    g_free(contents);
+
+    /* line-init co the xay ra o mot terminal dang chay nen khi command ket
+       thuc, du nguoi dung dang focus chat/form. PROBE chi khoi tao profile
+       ngay sau mot focus-in moi va khong bao gio de len fingerprint web. */
+    if (active == 2) {
+        gint64 age = g_get_monotonic_time() - self->focus_in_time;
+
+        if (!self->focused ||
+            self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED ||
+            age < 0 || age > 500 * G_TIME_SPAN_MILLISECOND) {
+            uk_log("engine=%p profile-event zsh=probe ignored age-us=%lld",
+                   (void *)self, (long long)age);
+            return;
+        }
+        active = 1;
+    }
+    if (!self->focused) {
+        uk_log("engine=%p profile-event zsh=%s ignored-no-focus",
+               (void *)self, active ? "on" : "off");
+        return;
+    }
+    if (self->zsh_terminal_active == (active != 0))
+        return;
+    self->zsh_terminal_active = active != 0;
+    uk_ibus_engine_update_mode(self, active ? "profile-zsh-on"
+                                             : "profile-zsh-off");
+}
+
+static void uk_ibus_engine_watch_profiles(UkIBusEngine *self)
+{
+    const char *options = UkGetDefConfFileName();
+    char *dir;
+    GFile *directory;
+
+    if (!options)
+        return;
+    dir = g_path_get_dirname(options);
+    self->profile_event_path = g_build_filename(dir, "profile-event", NULL);
+    directory = g_file_new_for_path(dir);
+    self->profile_monitor = g_file_monitor_directory(
+        directory, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
+    g_object_unref(directory);
+    g_free(dir);
+    if (self->profile_monitor)
+        g_signal_connect(self->profile_monitor, "changed",
+                         G_CALLBACK(uk_ibus_engine_profile_changed), self);
 }
 
 static void uk_ibus_engine_focus_in(IBusEngine *engine)
@@ -583,9 +701,12 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     self->purpose = IBUS_INPUT_PURPOSE_FREE_FORM;
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->zsh_terminal_active = FALSE;
     self->focused = TRUE;
+    self->focus_in_time = g_get_monotonic_time();
     self->mode_applied = FALSE;
     uk_bridge_reset(self->bridge);
     uk_ibus_engine_update_mode(self, "focus-in");
@@ -600,8 +721,11 @@ static void uk_ibus_engine_focus_out(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->zsh_terminal_active = FALSE;
+    self->focus_in_time = 0;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     uk_log("engine=%p focus-out", (void *)self);
@@ -636,6 +760,11 @@ static void uk_ibus_engine_set_content_type(IBusEngine *engine,
 
     self->purpose = purpose;
     self->hints = hints;
+    self->saw_terminal_purpose =
+        uk_ibus_policy_update_terminal_purpose_latch(
+            self->saw_terminal_purpose,
+            purpose == IBUS_INPUT_PURPOSE_TERMINAL,
+            purpose == IBUS_INPUT_PURPOSE_FREE_FORM);
     self->saw_direct_purpose = uk_ibus_policy_update_direct_purpose_latch(
         self->saw_direct_purpose,
         purpose == IBUS_INPUT_PURPOSE_ALPHA ||
@@ -671,8 +800,11 @@ static void uk_ibus_engine_disable(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->zsh_terminal_active = FALSE;
+    self->focus_in_time = 0;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->disable(engine);
@@ -689,16 +821,22 @@ static void uk_ibus_engine_init(UkIBusEngine *self)
     self->prop_vni = NULL;
     self->prop_viqr = NULL;
     self->state_source = 0;
+    self->profile_monitor = NULL;
+    self->profile_event_path = NULL;
     self->capabilities = 0;
     self->purpose = IBUS_INPUT_PURPOSE_FREE_FORM;
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
+    self->saw_terminal_purpose = FALSE;
     self->saw_direct_purpose = FALSE;
     self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->zsh_terminal_active = FALSE;
+    self->focus_in_time = 0;
     self->focused = FALSE;
     self->mode_applied = FALSE;
     self->mode = UK_IBUS_MODE_PREEDIT;
     self->bridge = uk_bridge_new(&BridgeVTable, self);
+    uk_ibus_engine_watch_profiles(self);
     uk_ibus_engine_build_properties(self);
 
     /* Khi la ibus engine thi nguoi dung bat/tat bang Super-Space cua GNOME,
@@ -722,6 +860,12 @@ static void uk_ibus_engine_destroy(IBusObject *object)
         uk_bridge_free(self->bridge);
         self->bridge = NULL;
     }
+    if (self->profile_monitor) {
+        g_file_monitor_cancel(self->profile_monitor);
+        g_object_unref(self->profile_monitor);
+        self->profile_monitor = NULL;
+    }
+    g_clear_pointer(&self->profile_event_path, g_free);
     if (self->properties) {
         g_object_unref(self->prop_telex);
         g_object_unref(self->prop_vni);
