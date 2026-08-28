@@ -32,7 +32,6 @@ typedef struct {
 
     GtkWidget *dialog;
     GtkComboBoxText *input_combo;
-    GtkComboBoxText *terminal_combo;
     GtkToggleButton *free_style;
     GtkToggleButton *modern_style;
     GtkToggleButton *spell_check;
@@ -254,8 +253,6 @@ static gboolean collect_controls(SetupApp *app, GError **error)
 {
     const char *input = gtk_combo_box_get_active_id(
         GTK_COMBO_BOX(app->input_combo));
-    const char *terminal = gtk_combo_box_get_active_id(
-        GTK_COMBO_BOX(app->terminal_combo));
     const char *macro = gtk_entry_get_text(app->macro_file);
     const char *keymap = gtk_entry_get_text(app->keymap_file);
     char *new_macro = NULL;
@@ -273,8 +270,9 @@ static gboolean collect_controls(SetupApp *app, GError **error)
     }
 
     app->opt.inputMethod = input_method_from_id(input);
-    app->opt.terminalMode = g_strcmp0(terminal, "PREEDIT") == 0
-                          ? UkTerminalPreedit : UkTerminalOff;
+    /* IBus policy moi luon tat bo go trong terminal. Giu truong options o
+       gia tri OFF de file cu van doc duoc ma UI khong ghi lai PREEDIT. */
+    app->opt.terminalMode = UkTerminalOff;
     app->opt.uk.freeMarking = gtk_toggle_button_get_active(app->free_style);
     app->opt.uk.modernStyle = gtk_toggle_button_get_active(app->modern_style);
     app->opt.uk.spellCheckEnabled =
@@ -550,26 +548,19 @@ static void build_dialog(SetupApp *app)
                                 GTK_STYLE_CLASS_DIM_LABEL);
     gtk_grid_attach(GTK_GRID(grid), label, 1, row++, 1, 1);
 
-    label = gtk_label_new_with_mnemonic("Profile _terminal / zsh:");
+    label = gtk_label_new("Profile terminal / zsh:");
     gtk_widget_set_halign(label, GTK_ALIGN_END);
-    app->terminal_combo = GTK_COMBO_BOX_TEXT(gtk_combo_box_text_new());
-    gtk_combo_box_text_append(app->terminal_combo, "OFF", "Tắt bộ gõ");
-    gtk_combo_box_text_append(app->terminal_combo, "PREEDIT",
-                              "Preedit trong suốt");
-    gtk_combo_box_set_active_id(
-        GTK_COMBO_BOX(app->terminal_combo),
-        app->opt.terminalMode == UkTerminalPreedit ? "PREEDIT" : "OFF");
-    gtk_label_set_mnemonic_widget(GTK_LABEL(label),
-                                  GTK_WIDGET(app->terminal_combo));
     gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), GTK_WIDGET(app->terminal_combo),
-                    1, row++, 1, 1);
+    label = gtk_label_new("Tắt bộ gõ — tự động");
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_style_context_add_class(gtk_widget_get_style_context(label),
+                                GTK_STYLE_CLASS_DIM_LABEL);
+    gtk_grid_attach(GTK_GRID(grid), label, 1, row++, 1, 1);
 
     mode_box = gtk_frame_new("Chế độ xử lý: Tự động");
     mode_text = gtk_label_new(
-        "Profile general xử lý purpose IBus chuẩn; profile firefox/web dùng "
-        "Direct cho address bar, chat và text entry đã xác nhận; profile zsh "
-        "dùng tuỳ chọn terminal ở trên. VS Code không khai purpose TERMINAL, "
+        "Terminal dùng Off; address bar Firefox/Chromium dùng Direct; mọi ô "
+        "nhập khác dùng Preedit/Predict. VS Code không khai purpose TERMINAL, "
         "nên zsh cần source /usr/share/x-unikey/profile-zsh.zsh trong ~/.zshrc.");
     gtk_label_set_line_wrap(GTK_LABEL(mode_text), TRUE);
     gtk_label_set_xalign(GTK_LABEL(mode_text), 0.0f);

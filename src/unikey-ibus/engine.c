@@ -104,8 +104,8 @@ struct _UkIBusEngine {
     gboolean   preedit_visible;
     gboolean   capabilities_known;
     gboolean   saw_terminal_purpose;
-    gboolean   saw_direct_purpose;
-    UkFirefoxEntryState firefox_entry;
+    gboolean   saw_address_purpose;
+    UkBrowserAddressState browser_address;
     gboolean   zsh_terminal_active;
     gint64     focus_in_time;
     gboolean   focused;
@@ -385,12 +385,12 @@ static void uk_ibus_engine_property_activate(IBusEngine *engine,
  --------------------------------------------------------------------*/
 static void uk_ibus_engine_note_context_input(UkIBusEngine *self)
 {
-    UkFirefoxEntryState old_state = self->firefox_entry;
+    UkBrowserAddressState old_state = self->browser_address;
 
-    self->firefox_entry = uk_ibus_policy_note_input(
-        self->firefox_entry, self->mode == UK_IBUS_MODE_DIRECT);
-    if (old_state != self->firefox_entry) {
-        uk_log("engine=%p firefox-entry=rejected reason=input-before-direct",
+    self->browser_address = uk_ibus_policy_note_input(
+        self->browser_address, self->mode == UK_IBUS_MODE_DIRECT);
+    if (old_state != self->browser_address) {
+        uk_log("engine=%p browser-address=rejected reason=input-before-direct",
                (void *)self);
         /* CONFIRMED nhung chua co surrounding dang o OFF. Khi phim dau tien
            den, reject candidate va ap PREEDIT TRUOC khi xu ly phim; khong de
@@ -422,8 +422,8 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
         (keyval == IBUS_KEY_BackSpace || uk_keys_is_editing(keyval) ||
          uk_keys_is_keypad_digit(keyval) || ibus_keyval_to_unicode(keyval) != 0)) {
         uch = ibus_keyval_to_unicode(keyval);
-        if ((self->saw_direct_purpose ||
-             self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED) &&
+        if ((self->saw_address_purpose ||
+             self->browser_address == UK_BROWSER_ADDRESS_CONFIRMED) &&
             uch != 0 && uch <= 0xFF &&
             keyval != IBUS_KEY_BackSpace && !uk_keys_is_editing(keyval) &&
             !uk_keys_is_keypad_digit(keyval)) {
@@ -500,14 +500,11 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
   Capability SURROUNDING_TEXT khong du de chon DIRECT: VTE co capability gia
   trong luc khoi tao, con VS Code/xterm.js co textarea surrounding that nhung
   no khong phai editable buffer -- delete/commit duoc bien thanh byte cua PTY.
-  Vi vay IBus khong chon DIRECT tu caps mot minh. Purpose ALPHA/URL/EMAIL/NAME
-  duoc vao DIRECT sau handshake. Firefox/GTK lai gui mozAwesomebar thanh
-  FREE_FORM; address bar va cac text/chat entry web/Electron gui hint 0x40
-  hoac 0x41. Cho chung vao DIRECT ngay khi surrounding san sang de khong kich
-  hoat composition/predict. FREE_FORM+hints=NONE van PREEDIT vi metadata IBus
-  nay giong nhau tren input=text va xterm.js. Chi purpose=TERMINAL moi theo
-  TerminalMode; latch no den focus-out vi IBus/VTE moi co the gui lai
-  FREE_FORM trong cung focus. Terminal van co do uu tien truoc moi rule entry.
+  Vi vay IBus khong chon DIRECT tu caps mot minh. Chi address bar vao DIRECT:
+  Chromium khai purpose=URL, Firefox/GTK gui mozAwesomebar thanh
+  FREE_FORM+hints=0x40. ALPHA/EMAIL/NAME, 0x41/0x45, chat va form web deu giu
+  PREEDIT. Purpose=TERMINAL va profile zsh luon OFF; latch terminal den
+  focus-out vi IBus/VTE moi co the gui lai FREE_FORM trong cung focus.
  --------------------------------------------------------------------*/
 static const char *uk_ibus_mode_name(UkIBusMode mode)
 {
@@ -519,12 +516,12 @@ static const char *uk_ibus_mode_name(UkIBusMode mode)
     return "?";
 }
 
-static const char *uk_firefox_entry_name(UkFirefoxEntryState state)
+static const char *uk_browser_address_name(UkBrowserAddressState state)
 {
     switch (state) {
-    case UK_FIREFOX_ENTRY_NONE:          return "none";
-    case UK_FIREFOX_ENTRY_CONFIRMED:     return "confirmed";
-    case UK_FIREFOX_ENTRY_REJECTED:      return "rejected";
+    case UK_BROWSER_ADDRESS_NONE:      return "none";
+    case UK_BROWSER_ADDRESS_CONFIRMED: return "confirmed";
+    case UK_BROWSER_ADDRESS_REJECTED:  return "rejected";
     }
     return "?";
 }
@@ -532,9 +529,9 @@ static const char *uk_firefox_entry_name(UkFirefoxEntryState state)
 static const char *uk_ibus_profile_name(UkIBusProfile profile)
 {
     switch (profile) {
-    case UK_IBUS_PROFILE_GENERAL:      return "general";
-    case UK_IBUS_PROFILE_FIREFOX_WEB:  return "firefox-web";
-    case UK_IBUS_PROFILE_ZSH_TERMINAL: return "zsh-terminal";
+    case UK_IBUS_PROFILE_GENERAL:         return "general";
+    case UK_IBUS_PROFILE_BROWSER_ADDRESS: return "browser-address";
+    case UK_IBUS_PROFILE_ZSH_TERMINAL:    return "zsh-terminal";
     }
     return "?";
 }
@@ -558,11 +555,11 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
 #endif
     profile = uk_ibus_policy_select_profile(
         self->zsh_terminal_active,
-        self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED);
+        self->browser_address == UK_BROWSER_ADDRESS_CONFIRMED);
     is_terminal = self->saw_terminal_purpose ||
         profile == UK_IBUS_PROFILE_ZSH_TERMINAL;
-    is_direct_entry = self->saw_direct_purpose ||
-        profile == UK_IBUS_PROFILE_FIREFOX_WEB;
+    is_direct_entry = self->saw_address_purpose ||
+        profile == UK_IBUS_PROFILE_BROWSER_ADDRESS;
     can_surround = (self->capabilities & IBUS_CAP_SURROUNDING_TEXT) != 0;
     fallback_preedit =
         uk_bridge_get_terminal_mode(self->bridge) == UkTerminalPreedit;
@@ -585,14 +582,14 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     }
 
     uk_log("engine=%p reason=%s profile=%s focus=%s caps=%s0x%x purpose=%u hints=0x%x "
-           "terminal-entry=%s purpose-entry=%s hint-entry=%s surrounding=%s -> %s%s",
+           "terminal-entry=%s address-purpose=%s address-hint=%s surrounding=%s -> %s%s",
            (void *)self, reason, uk_ibus_profile_name(profile),
            self->focused ? "yes" : "no",
            self->capabilities_known ? "" : "?", self->capabilities,
            self->purpose, self->hints,
            self->saw_terminal_purpose ? "yes" : "no",
-           self->saw_direct_purpose ? "yes" : "no",
-           uk_firefox_entry_name(self->firefox_entry),
+           self->saw_address_purpose ? "yes" : "no",
+           uk_browser_address_name(self->browser_address),
            can_surround ? "yes" : "no",
            uk_ibus_mode_name(new_mode), self->focused ? "" : " (deferred)");
 }
@@ -651,7 +648,7 @@ static void uk_ibus_engine_profile_changed(GFileMonitor *monitor,
         gint64 age = g_get_monotonic_time() - self->focus_in_time;
 
         if (!self->focused ||
-            self->firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED ||
+            self->browser_address != UK_BROWSER_ADDRESS_NONE ||
             age < 0 || age > 500 * G_TIME_SPAN_MILLISECOND) {
             uk_log("engine=%p profile-event zsh=probe ignored age-us=%lld",
                    (void *)self, (long long)age);
@@ -702,8 +699,8 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
     self->saw_terminal_purpose = FALSE;
-    self->saw_direct_purpose = FALSE;
-    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->saw_address_purpose = FALSE;
+    self->browser_address = UK_BROWSER_ADDRESS_NONE;
     self->zsh_terminal_active = FALSE;
     self->focused = TRUE;
     self->focus_in_time = g_get_monotonic_time();
@@ -722,8 +719,8 @@ static void uk_ibus_engine_focus_out(IBusEngine *engine)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
     self->saw_terminal_purpose = FALSE;
-    self->saw_direct_purpose = FALSE;
-    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->saw_address_purpose = FALSE;
+    self->browser_address = UK_BROWSER_ADDRESS_NONE;
     self->zsh_terminal_active = FALSE;
     self->focus_in_time = 0;
     self->focused = FALSE;
@@ -765,17 +762,15 @@ static void uk_ibus_engine_set_content_type(IBusEngine *engine,
             self->saw_terminal_purpose,
             purpose == IBUS_INPUT_PURPOSE_TERMINAL,
             purpose == IBUS_INPUT_PURPOSE_FREE_FORM);
-    self->saw_direct_purpose = uk_ibus_policy_update_direct_purpose_latch(
-        self->saw_direct_purpose,
-        purpose == IBUS_INPUT_PURPOSE_ALPHA ||
-        purpose == IBUS_INPUT_PURPOSE_URL ||
-        purpose == IBUS_INPUT_PURPOSE_EMAIL ||
-        purpose == IBUS_INPUT_PURPOSE_NAME,
+    self->saw_address_purpose = uk_ibus_policy_update_address_purpose_latch(
+        self->saw_address_purpose,
+        purpose == IBUS_INPUT_PURPOSE_URL,
         purpose == IBUS_INPUT_PURPOSE_FREE_FORM);
-    self->firefox_entry = uk_ibus_policy_update_firefox_entry(
-        self->firefox_entry,
+    self->browser_address = uk_ibus_policy_update_browser_address(
+        self->browser_address,
         purpose == IBUS_INPUT_PURPOSE_FREE_FORM,
-        uk_ibus_policy_is_direct_text_hints(hints));
+        uk_ibus_policy_is_firefox_address_hints(hints),
+        uk_ibus_policy_is_general_text_hints(hints));
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->set_content_type(engine,
                                                                     purpose, hints);
     uk_ibus_engine_update_mode(self, "content-type");
@@ -801,8 +796,8 @@ static void uk_ibus_engine_disable(IBusEngine *engine)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
     self->saw_terminal_purpose = FALSE;
-    self->saw_direct_purpose = FALSE;
-    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->saw_address_purpose = FALSE;
+    self->browser_address = UK_BROWSER_ADDRESS_NONE;
     self->zsh_terminal_active = FALSE;
     self->focus_in_time = 0;
     self->focused = FALSE;
@@ -828,8 +823,8 @@ static void uk_ibus_engine_init(UkIBusEngine *self)
     self->hints = IBUS_INPUT_HINT_NONE;
     self->capabilities_known = FALSE;
     self->saw_terminal_purpose = FALSE;
-    self->saw_direct_purpose = FALSE;
-    self->firefox_entry = UK_FIREFOX_ENTRY_NONE;
+    self->saw_address_purpose = FALSE;
+    self->browser_address = UK_BROWSER_ADDRESS_NONE;
     self->zsh_terminal_active = FALSE;
     self->focus_in_time = 0;
     self->focused = FALSE;

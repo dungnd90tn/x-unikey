@@ -11,7 +11,7 @@ set -e
 umask 022
 
 VERSION="${VERSION:-1.0.4}"
-REVISION="${REVISION:-14}"
+REVISION="${REVISION:-15}"
 ARCH="$(dpkg --print-architecture)"
 PKG="x-unikey"
 OUT="release"
@@ -146,8 +146,8 @@ Description: Bo go tieng Viet UniKey cho X11 va Wayland
   * IBus engine  - hien trong Settings -> Keyboard -> Input Sources,
                    go duoc trong ca VSCode va cac ung dung Electron/GTK4
                    chay tren Wayland
-  * Cua so setup - Telex/VNI/VIQR, terminal mode, dat dau va spell-check
-  * Profile zsh  - tat/preedit dung rieng terminal, khong anh huong VSCode chat
+  * Cua so setup - Telex/VNI/VIQR, dat dau va spell-check
+  * Profile tu dong - terminal Off, address bar Direct, cac o khac Preedit
   * Module GTK3 va GTK4
   * Plugin Qt6
  .
