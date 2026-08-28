@@ -84,6 +84,7 @@ chmod 644 "$STAGE$APPLICATIONS_DIR/ibus-setup-unikey.desktop"
 
 # Tai lieu
 install -Dm644 README            "$STAGE/usr/share/doc/$PKG/README"
+install -Dm644 NEWS              "$STAGE/usr/share/doc/$PKG/NEWS"
 install -Dm644 doc/STANDALONE.md "$STAGE/usr/share/doc/$PKG/STANDALONE.md"
 install -Dm644 COPYING           "$STAGE/usr/share/doc/$PKG/copyright"
 install -Dm644 doc/ukmacro       "$STAGE/usr/share/doc/$PKG/examples/ukmacro"
