@@ -155,6 +155,10 @@ Mo menu `VN` tren thanh IBus, chon `Cai dat...`; hoac bam Preferences cua
 Vietnamese (UniKey) trong IBus/Settings. Cua so chi chay khi duoc mo, khong co
 tray/status window va khong tu khoi dong cung desktop.
 
+Trang thai trong menu hien `VN - ON` hoac `VN - OFF` va co the bam de bat/tat.
+GNOME Shell chi cho symbol InputMode tren top bar toi da hai ky tu, nen top bar
+hien `V+` khi ON va `V-` khi OFF. Ctrl-Shift cap nhat trang thai nay ngay.
+
 Co the chon Telex/VNI/VIQR/kieu tu dinh nghia, dat dau tu do, kieu dat dau,
 kiem tra chinh ta, tu khoi phuc tu ngoai, macro va keymap rieng. Bang ma hien
 dai co dinh la Unicode (UTF-8): IBus/Wayland khong the commit an toan byte

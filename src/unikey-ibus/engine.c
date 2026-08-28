@@ -92,6 +92,7 @@ struct _UkIBusEngine {
     IBusEngine parent;
     UkBridge  *bridge;
     IBusPropList *properties;
+    IBusProperty *prop_input_mode;
     IBusProperty *prop_telex;
     IBusProperty *prop_vni;
     IBusProperty *prop_viqr;
@@ -245,6 +246,21 @@ static IBusProperty *uk_ibus_property_new(const char *key,
     return prop;
 }
 
+static void uk_ibus_property_set_text(IBusProperty *prop,
+                                      const char *label,
+                                      const char *symbol)
+{
+    IBusText *label_text = ibus_text_new_from_string(label);
+    IBusText *symbol_text = ibus_text_new_from_string(symbol);
+
+    g_object_ref_sink(label_text);
+    g_object_ref_sink(symbol_text);
+    ibus_property_set_label(prop, label_text);
+    ibus_property_set_symbol(prop, symbol_text);
+    g_object_unref(label_text);
+    g_object_unref(symbol_text);
+}
+
 static void uk_ibus_engine_build_properties(UkIBusEngine *self)
 {
     IBusPropList *methods = ibus_prop_list_new();
@@ -256,6 +272,15 @@ static void uk_ibus_engine_build_properties(UkIBusEngine *self)
     g_object_ref_sink(methods);
     self->properties = ibus_prop_list_new();
     g_object_ref_sink(self->properties);
+
+    /* GNOME Shell dung property key InputMode de thay symbol tren top bar.
+       Shell chi chap nhan toi da hai grapheme, nen top bar dung V+/V-; label
+       day du VN - ON/OFF van hien trong menu va property co the bam de toggle. */
+    self->prop_input_mode = uk_ibus_property_new(
+        "InputMode", PROP_TYPE_TOGGLE, "VN - ON",
+        "Bật/tắt gõ tiếng Việt", PROP_STATE_CHECKED, NULL);
+    uk_ibus_property_set_text(self->prop_input_mode, "VN - ON", "V+");
+    ibus_prop_list_append(self->properties, self->prop_input_mode);
 
     self->prop_telex = uk_ibus_property_new(
         "InputMethod.Telex", PROP_TYPE_RADIO, "Telex",
@@ -292,11 +317,18 @@ static void uk_ibus_engine_build_properties(UkIBusEngine *self)
 static void uk_ibus_engine_sync_properties(UkIBusEngine *self,
                                            gboolean publish)
 {
+    int enabled;
     int method;
 
     if (!self->properties)
         return;
+    enabled = uk_bridge_get_enabled(self->bridge);
     method = uk_bridge_get_input_method(self->bridge);
+    uk_ibus_property_set_text(self->prop_input_mode,
+                              enabled ? "VN - ON" : "VN - OFF",
+                              enabled ? "V+" : "V-");
+    ibus_property_set_state(self->prop_input_mode,
+        enabled ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED);
     ibus_property_set_state(self->prop_telex,
         method == UkTelex ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED);
     ibus_property_set_state(self->prop_vni,
@@ -305,6 +337,7 @@ static void uk_ibus_engine_sync_properties(UkIBusEngine *self,
         method == UkViqr ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED);
 
     if (publish) {
+        ibus_engine_update_property(IBUS_ENGINE(self), self->prop_input_mode);
         ibus_engine_update_property(IBUS_ENGINE(self), self->prop_telex);
         ibus_engine_update_property(IBUS_ENGINE(self), self->prop_vni);
         ibus_engine_update_property(IBUS_ENGINE(self), self->prop_viqr);
@@ -359,7 +392,10 @@ static void uk_ibus_engine_property_activate(IBusEngine *engine,
     UkIBusEngine *self = (UkIBusEngine *)engine;
 
     (void)prop_state;
-    if (strcmp(prop_name, "InputMethod.Telex") == 0)
+    if (strcmp(prop_name, "InputMode") == 0) {
+        uk_bridge_set_enabled(self->bridge,
+            prop_state == PROP_STATE_CHECKED);
+    } else if (strcmp(prop_name, "InputMethod.Telex") == 0)
         uk_bridge_set_input_method(self->bridge, UkTelex);
     else if (strcmp(prop_name, "InputMethod.Vni") == 0)
         uk_bridge_set_input_method(self->bridge, UkVni);
@@ -812,6 +848,7 @@ static void uk_ibus_engine_init(UkIBusEngine *self)
 
     self->preedit_visible = FALSE;
     self->properties = NULL;
+    self->prop_input_mode = NULL;
     self->prop_telex = NULL;
     self->prop_vni = NULL;
     self->prop_viqr = NULL;
@@ -862,11 +899,13 @@ static void uk_ibus_engine_destroy(IBusObject *object)
     }
     g_clear_pointer(&self->profile_event_path, g_free);
     if (self->properties) {
+        g_object_unref(self->prop_input_mode);
         g_object_unref(self->prop_telex);
         g_object_unref(self->prop_vni);
         g_object_unref(self->prop_viqr);
         g_object_unref(self->properties);
         self->properties = NULL;
+        self->prop_input_mode = NULL;
         self->prop_telex = NULL;
         self->prop_vni = NULL;
         self->prop_viqr = NULL;
