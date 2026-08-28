@@ -1,1 +1,17 @@
-More to come
+28.8.2026: 1.0.4-16
+  + Simplified automatic IBus profiles:
+     - terminals use OFF;
+     - Firefox and Chromium address bars use DIRECT;
+     - Gmail, web forms, VS Code chat and other text fields use PREEDIT.
+  + Fixed inconsistent mode selection between fields and windows in the same
+    browser session. Gmail hint transitions such as 0x45 -> 0x41 now stay in
+    PREEDIT instead of switching to DIRECT and repeating or corrupting text.
+  + Limited DIRECT detection to Chromium purpose=URL and Firefox awesomebar
+    hint 0x40. ALPHA, EMAIL, NAME, 0x41 and 0x45 remain in general/PREEDIT.
+  + Terminal detection now ignores the legacy TerminalMode=Preedit value and
+    stays OFF after VTE resets purpose=TERMINAL to FREE_FORM.
+  + Added an IBus InputMode status property. The menu shows VN - ON/OFF and
+    GNOME Shell shows V+/V- on the top bar; Ctrl-Shift and shared state changes
+    update the indicator immediately. The property can also be clicked to
+    toggle Vietnamese input.
+  + Updated the setup UI, VTE smoke test and README for the new profile rules.

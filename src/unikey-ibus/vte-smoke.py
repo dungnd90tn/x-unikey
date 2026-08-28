@@ -29,14 +29,14 @@ except (ImportError, ValueError):
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--terminal-mode",
-    required=True,
-    choices=("off", "preedit"),
-    help="must match TerminalMode in ~/.unikey/options for the running engine",
+    default="off",
+    choices=("off",),
+    help="terminal profile is fixed to off",
 )
 args = parser.parse_args()
 
 KEYS = "xem ddwowcj chuwa naof"
-EXPECTED = KEYS if args.terminal_mode == "off" else "xem được chưa nào"
+EXPECTED = KEYS
 CAPTURE = "/tmp/x-unikey-vte-capture-%d.txt" % os.getpid()
 
 window = Gtk.Window(title="x-unikey VTE regression test (%s)" % args.terminal_mode)

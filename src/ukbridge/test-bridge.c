@@ -308,18 +308,19 @@ static void check_ibus_policy_case(const char *name,
 static void check_ibus_policy(void)
 {
     int terminal_purpose_latch;
-    int direct_purpose_latch;
-    UkFirefoxEntryState firefox_entry;
-    UkFirefoxEntryState trace_entry;
-    UkFirefoxEntryState chat_entry;
+    int address_purpose_latch;
+    UkBrowserAddressState firefox_address;
+    UkBrowserAddressState trace_address;
+    UkBrowserAddressState chat_address;
     int trace_ok;
     int zsh_active = -1;
 
     if (uk_ibus_policy_select_profile(0, 0) == UK_IBUS_PROFILE_GENERAL &&
-        uk_ibus_policy_select_profile(0, 1) == UK_IBUS_PROFILE_FIREFOX_WEB &&
+        uk_ibus_policy_select_profile(0, 1) ==
+            UK_IBUS_PROFILE_BROWSER_ADDRESS &&
         uk_ibus_policy_select_profile(1, 1) ==
             UK_IBUS_PROFILE_ZSH_TERMINAL) {
-        printf("  ok   policy profile priority: zsh > firefox > general\n");
+        printf("  ok   policy profile priority: terminal > address > general\n");
     } else {
         printf("  FAIL policy profile priority\n");
         Failures++;
@@ -339,9 +340,9 @@ static void check_ibus_policy(void)
         Failures++;
     }
 
-    /* VTE: purpose terminal thang caps 0x29 gia, nhung van ton trong option. */
-    check_ibus_policy_case("terminal preedit + caps gia",
-                           0, 1, 0, 1, 1, 1, UK_IBUS_MODE_PREEDIT);
+    /* Moi terminal luon OFF, ke ca file options cu con TerminalMode=Preedit. */
+    check_ibus_policy_case("terminal ignores legacy preedit",
+                           0, 1, 0, 1, 1, 1, UK_IBUS_MODE_OFF);
     check_ibus_policy_case("terminal off + caps gia",
                            0, 1, 0, 1, 1, 0, UK_IBUS_MODE_OFF);
     check_ibus_policy_case("terminal off + no surrounding",
@@ -377,60 +378,70 @@ static void check_ibus_policy(void)
     check_ibus_policy_case("URL bar no surrounding",
                            0, 0, 1, 1, 0, 1, UK_IBUS_MODE_OFF);
 
-    /* Firefox awesomebar va chat/input web/Electron gui h0x40/0x41. Confirm
-       ngay de khong cho phim dau tien lot vao PREEDIT/predict. */
-    firefox_entry = uk_ibus_policy_update_firefox_entry(
-        UK_FIREFOX_ENTRY_NONE, 1,
-        uk_ibus_policy_is_direct_text_hints(0x40));
-    check_ibus_policy_case("text entry + surrounding",
-                           0, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+    /* Firefox awesomebar gui dung h0x40. Chat/form h0x41 khong duoc nhan nham
+       thanh address bar. */
+    firefox_address = uk_ibus_policy_update_browser_address(
+        UK_BROWSER_ADDRESS_NONE, 1,
+        uk_ibus_policy_is_firefox_address_hints(0x40),
+        uk_ibus_policy_is_general_text_hints(0x40));
+    check_ibus_policy_case("Firefox address + surrounding",
+                           0, 0,
+                           firefox_address == UK_BROWSER_ADDRESS_CONFIRMED,
                            1, 1, 1,
                            UK_IBUS_MODE_DIRECT);
-    check_ibus_policy_case("text entry chua surrounding",
-                           0, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+    check_ibus_policy_case("Firefox address chua surrounding",
+                           0, 0,
+                           firefox_address == UK_BROWSER_ADDRESS_CONFIRMED,
                            1, 0, 1,
                            UK_IBUS_MODE_OFF);
-    check_ibus_policy_case("terminal uu tien Firefox hint",
-                           0, 1, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+    check_ibus_policy_case("terminal uu tien address hint",
+                           0, 1,
+                           firefox_address == UK_BROWSER_ADDRESS_CONFIRMED,
                            1, 1, 0,
                            UK_IBUS_MODE_OFF);
-    check_ibus_policy_case("terminal preedit uu tien hint",
-                           0, 1, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+    check_ibus_policy_case("legacy preedit khong de address hint",
+                           0, 1,
+                           firefox_address == UK_BROWSER_ADDRESS_CONFIRMED,
                            1, 1, 1,
-                           UK_IBUS_MODE_PREEDIT);
-    check_ibus_policy_case("password uu tien Firefox hint",
-                           1, 0, firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED,
+                           UK_IBUS_MODE_OFF);
+    check_ibus_policy_case("password uu tien address hint",
+                           1, 0,
+                           firefox_address == UK_BROWSER_ADDRESS_CONFIRMED,
                            1, 1, 1,
                            UK_IBUS_MODE_OFF);
 
     /* Replay Firefox Wayland: h0x40 co the den truoc caps surrounding. Candidate
        vao OFF tam thoi, roi DIRECT ngay khi caps0x29 den; h0 sau do khong duoc
        xoa latch. */
-    trace_entry = UK_FIREFOX_ENTRY_NONE;
+    trace_address = UK_BROWSER_ADDRESS_NONE;
     trace_ok =
         uk_ibus_policy_choose(0, 0, 0, 0, 0, 1) ==
             UK_IBUS_MODE_PREEDIT &&
         uk_ibus_policy_choose(0, 0, 0, 1, 0, 1) ==
             UK_IBUS_MODE_PREEDIT;
-    trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 1, uk_ibus_policy_is_direct_text_hints(0x40));
+    trace_address = uk_ibus_policy_update_browser_address(
+        trace_address, 1, uk_ibus_policy_is_firefox_address_hints(0x40),
+        uk_ibus_policy_is_general_text_hints(0x40));
     trace_ok = trace_ok &&
-        trace_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
+        trace_address == UK_BROWSER_ADDRESS_CONFIRMED &&
         uk_ibus_policy_choose(0, 0, 1, 1, 0, 1) ==
             UK_IBUS_MODE_OFF &&
         uk_ibus_policy_choose(0, 0, 1, 1, 1, 1) ==
             UK_IBUS_MODE_DIRECT;
-    trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 1, uk_ibus_policy_is_direct_text_hints(0));
+    trace_address = uk_ibus_policy_update_browser_address(
+        trace_address, 1, uk_ibus_policy_is_firefox_address_hints(0),
+        uk_ibus_policy_is_general_text_hints(0));
     trace_ok = trace_ok &&
-        trace_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
+        trace_address == UK_BROWSER_ADDRESS_CONFIRMED &&
         uk_ibus_policy_choose(0, 0, 1, 1, 1, 1) ==
             UK_IBUS_MODE_DIRECT;
-    trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 0, uk_ibus_policy_is_direct_text_hints(0));
-    trace_entry = uk_ibus_policy_update_firefox_entry(
-        trace_entry, 1, uk_ibus_policy_is_direct_text_hints(0));
-    trace_ok = trace_ok && trace_entry == UK_FIREFOX_ENTRY_NONE &&
+    trace_address = uk_ibus_policy_update_browser_address(
+        trace_address, 0, uk_ibus_policy_is_firefox_address_hints(0),
+        uk_ibus_policy_is_general_text_hints(0));
+    trace_address = uk_ibus_policy_update_browser_address(
+        trace_address, 1, uk_ibus_policy_is_firefox_address_hints(0),
+        uk_ibus_policy_is_general_text_hints(0));
+    trace_ok = trace_ok && trace_address == UK_BROWSER_ADDRESS_NONE &&
         uk_ibus_policy_choose(0, 0, 0, 1, 1, 1) ==
             UK_IBUS_MODE_PREEDIT;
     if (trace_ok)
@@ -440,31 +451,37 @@ static void check_ibus_policy(void)
         Failures++;
     }
 
-    /* VS Code add-on chat gui h0x41 + surrounding: no la editable buffer that
-       va phai DIRECT. xterm.js h0 van duoc test PREEDIT o duoi. */
-    chat_entry = uk_ibus_policy_update_firefox_entry(
-        UK_FIREFOX_ENTRY_NONE, 1,
-        uk_ibus_policy_is_direct_text_hints(0x41));
-    if (chat_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
-        uk_ibus_policy_choose(0, 0, 1, 1, 1, 1) ==
-            UK_IBUS_MODE_DIRECT) {
-        printf("  ok   policy VS Code chat h0x41 -> DIRECT\n");
+    /* VS Code chat, form va Gmail h0x41/h0x45: tat ca phai PREEDIT. */
+    chat_address = uk_ibus_policy_update_browser_address(
+        UK_BROWSER_ADDRESS_NONE, 1,
+        uk_ibus_policy_is_firefox_address_hints(0x45),
+        uk_ibus_policy_is_general_text_hints(0x45));
+    chat_address = uk_ibus_policy_update_browser_address(
+        chat_address, 1,
+        uk_ibus_policy_is_firefox_address_hints(0x41),
+        uk_ibus_policy_is_general_text_hints(0x41));
+    if (chat_address == UK_BROWSER_ADDRESS_REJECTED &&
+        uk_ibus_policy_choose(0, 0, 0, 1, 1, 1) ==
+            UK_IBUS_MODE_PREEDIT &&
+        !uk_ibus_policy_is_firefox_address_hints(0x45)) {
+        printf("  ok   policy chat/form h0x41/h0x45 -> PREEDIT\n");
     } else {
-        printf("  FAIL policy VS Code chat h0x41\n");
+        printf("  FAIL policy chat/form hints\n");
         Failures++;
     }
 
     /* Editing/BackSpace truoc caps khong the handoff an toan vi caret/range
        chua xac dinh: reject DIRECT den focus-out. Printable key duoc bridge
        handoff rieng va test o check_pending_direct_handoff(). */
-    chat_entry = uk_ibus_policy_update_firefox_entry(
-        UK_FIREFOX_ENTRY_NONE, 1,
-        uk_ibus_policy_is_direct_text_hints(0x41));
-    chat_entry = uk_ibus_policy_note_input(chat_entry, 0);
-    if (chat_entry == UK_FIREFOX_ENTRY_REJECTED &&
-        uk_ibus_policy_note_input(UK_FIREFOX_ENTRY_CONFIRMED, 1) ==
-            UK_FIREFOX_ENTRY_CONFIRMED) {
-        printf("  ok   policy text-entry: editing truoc caps -> PREEDIT\n");
+    chat_address = uk_ibus_policy_update_browser_address(
+        UK_BROWSER_ADDRESS_NONE, 1,
+        uk_ibus_policy_is_firefox_address_hints(0x40),
+        uk_ibus_policy_is_general_text_hints(0x40));
+    chat_address = uk_ibus_policy_note_input(chat_address, 0);
+    if (chat_address == UK_BROWSER_ADDRESS_REJECTED &&
+        uk_ibus_policy_note_input(UK_BROWSER_ADDRESS_CONFIRMED, 1) ==
+            UK_BROWSER_ADDRESS_CONFIRMED) {
+        printf("  ok   policy address: editing truoc caps -> PREEDIT\n");
     } else {
         printf("  FAIL policy text-entry editing-before-caps\n");
         Failures++;
@@ -489,35 +506,39 @@ static void check_ibus_policy(void)
     check_ibus_policy_case("password terminal",
                            1, 1, 0, 1, 1, 1, UK_IBUS_MODE_OFF);
 
-    direct_purpose_latch = uk_ibus_policy_update_direct_purpose_latch(
+    address_purpose_latch = uk_ibus_policy_update_address_purpose_latch(
         0, 1, 0);
-    direct_purpose_latch = uk_ibus_policy_update_direct_purpose_latch(
-        direct_purpose_latch, 0, 1);
-    if (direct_purpose_latch == 1 &&
-        uk_ibus_policy_update_direct_purpose_latch(
-            direct_purpose_latch, 0, 0) == 0) {
-        printf("  ok   policy purpose latch: ALPHA/URL/EMAIL/NAME -> DIRECT\n");
+    address_purpose_latch = uk_ibus_policy_update_address_purpose_latch(
+        address_purpose_latch, 0, 1);
+    if (address_purpose_latch == 1 &&
+        uk_ibus_policy_update_address_purpose_latch(
+            address_purpose_latch, 0, 0) == 0) {
+        printf("  ok   policy purpose latch: chi URL -> DIRECT\n");
     } else {
         printf("  FAIL policy direct-purpose latch\n");
         Failures++;
     }
 
-    if (firefox_entry == UK_FIREFOX_ENTRY_CONFIRMED &&
-        uk_ibus_policy_is_direct_text_hints(0x40) &&
-        uk_ibus_policy_is_direct_text_hints(0x41) &&
-        !uk_ibus_policy_is_direct_text_hints(0) &&
-        !uk_ibus_policy_is_direct_text_hints(0x42) &&
-        uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_NONE, 1, 0) == UK_FIREFOX_ENTRY_NONE &&
-        uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_NONE, 0, 1) == UK_FIREFOX_ENTRY_NONE &&
-        uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_CONFIRMED, 1, 0) ==
-                UK_FIREFOX_ENTRY_CONFIRMED &&
-        uk_ibus_policy_update_firefox_entry(
-            UK_FIREFOX_ENTRY_REJECTED, 1, 1) ==
-                UK_FIREFOX_ENTRY_REJECTED) {
-        printf("  ok   policy direct hints: chi 0x40/0x41, latch focus\n");
+    if (firefox_address == UK_BROWSER_ADDRESS_CONFIRMED &&
+        uk_ibus_policy_is_firefox_address_hints(0x40) &&
+        !uk_ibus_policy_is_firefox_address_hints(0x41) &&
+        !uk_ibus_policy_is_firefox_address_hints(0x45) &&
+        !uk_ibus_policy_is_firefox_address_hints(0) &&
+        uk_ibus_policy_is_general_text_hints(0x41) &&
+        uk_ibus_policy_is_general_text_hints(0x45) &&
+        !uk_ibus_policy_is_general_text_hints(0x40) &&
+        !uk_ibus_policy_is_general_text_hints(0) &&
+        uk_ibus_policy_update_browser_address(
+            UK_BROWSER_ADDRESS_NONE, 1, 0, 0) == UK_BROWSER_ADDRESS_NONE &&
+        uk_ibus_policy_update_browser_address(
+            UK_BROWSER_ADDRESS_NONE, 0, 1, 0) == UK_BROWSER_ADDRESS_NONE &&
+        uk_ibus_policy_update_browser_address(
+            UK_BROWSER_ADDRESS_CONFIRMED, 1, 0, 1) ==
+                UK_BROWSER_ADDRESS_CONFIRMED &&
+        uk_ibus_policy_update_browser_address(
+            UK_BROWSER_ADDRESS_REJECTED, 1, 1, 0) ==
+                UK_BROWSER_ADDRESS_REJECTED) {
+        printf("  ok   policy address hint: chi 0x40, latch focus\n");
     } else {
         printf("  FAIL policy direct hints/latch\n");
         Failures++;

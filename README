@@ -155,14 +155,18 @@ Mo menu `VN` tren thanh IBus, chon `Cai dat...`; hoac bam Preferences cua
 Vietnamese (UniKey) trong IBus/Settings. Cua so chi chay khi duoc mo, khong co
 tray/status window va khong tu khoi dong cung desktop.
 
-Co the chon Telex/VNI/VIQR/kieu tu dinh nghia, TerminalMode Off/Preedit,
-dat dau tu do, kieu dat dau, kiem tra chinh ta, tu khoi phuc tu ngoai, macro
-va keymap rieng. Bang ma hien dai co dinh la Unicode (UTF-8): IBus/Wayland
-khong the commit an toan byte TCVN/VNI legacy.
+Trang thai trong menu hien `VN - ON` hoac `VN - OFF` va co the bam de bat/tat.
+GNOME Shell chi cho symbol InputMode tren top bar toi da hai ky tu, nen top bar
+hien `V+` khi ON va `V-` khi OFF. Ctrl-Shift cap nhat trang thai nay ngay.
 
-Policy IBus gom ba profile: general, firefox/web va zsh-terminal. Nguoi dung
+Co the chon Telex/VNI/VIQR/kieu tu dinh nghia, dat dau tu do, kieu dat dau,
+kiem tra chinh ta, tu khoi phuc tu ngoai, macro va keymap rieng. Bang ma hien
+dai co dinh la Unicode (UTF-8): IBus/Wayland khong the commit an toan byte
+TCVN/VNI legacy. Profile terminal co dinh la Off.
+
+Policy IBus gom ba profile: general, browser-address va zsh-terminal. Nguoi dung
 khong chon profile bang tay moi lan: engine tu chuyen theo o dang focus.
-General va firefox/web hoat dong ngay sau khi cai; zsh-terminal chi tu chuyen
+General va browser-address hoat dong ngay sau khi cai; zsh-terminal chi tu chuyen
 sau khi integration da duoc source MOT LAN trong ~/.zshrc. Neu chua source,
 VS Code terminal van bi xep vao general/PREEDIT vi no khong khai purpose
 TERMINAL. Xem muc 6.
@@ -170,7 +174,7 @@ TERMINAL. Xem muc 6.
 DIRECT/PREEDIT/OFF la che do tu dong theo tung o nhap, khong phai cong tac
 toan cuc. Cau hinh duoc ghi nguyen tu vao `~/.unikey/options`, giu ban cu dau
 tien o `~/.unikey/options.bak`. Kieu go va trang thai bat/tat co hieu luc ngay;
-cac tuy chon tinh (TerminalMode, dat dau, spell-check, macro) co hieu luc sau
+cac tuy chon tinh (dat dau, spell-check, macro) co hieu luc sau
 `ibus restart` hoac sau khi khoi dong lai ung dung dung module GTK/Qt.
 
 
@@ -205,33 +209,24 @@ PREEDIT
 
 IBus engine chon che do theo profile co thu tu uu tien:
 
-    zsh-terminal          -> theo TerminalMode       (focus do zsh integration bao)
-    firefox-web           -> DIRECT                  (h0x40/0x41 + surrounding)
+    zsh-terminal          -> OFF                     (focus do zsh integration bao)
+    browser-address       -> DIRECT                  (URL hoac h0x40 + surrounding)
     general/password/PIN  -> OFF
-    general/TERMINAL      -> theo TerminalMode       (latch den focus-out)
-    general/ALPHA/URL/EMAIL/NAME + surrounding -> DIRECT
-    general/FREE_FORM+h0  -> PREEDIT                 (input text / xterm.js)
-    general/con lai       -> PREEDIT trong suot
+    general/TERMINAL      -> OFF                     (latch den focus-out)
+    general/con lai       -> PREEDIT/PREDICT
 
 `IBUS_CAP_SURROUNDING_TEXT` chi noi rang client co mot buffer protocol, khong
 chung minh buffer do la van ban nguoi dung dang sua. VS Code/xterm.js la phan
 vi du: textarea an cua Chromium bao caps=0x29 va purpose=FREE_FORM, nhung thao
 tac delete/commit tren no duoc xterm.js bien thanh byte gui vao PTY. Vi khong co
 app-id hay purpose de nhan ra terminal nay, IBus khong tu chon DIRECT tu caps.
-Thanh dia chi va chat/input web la buffer that. Purpose tuong minh ALPHA, URL,
-EMAIL va NAME vao DIRECT; latch duoc giu neu client tra lai FREE_FORM. Chromium
-gui purpose=URL;
-Firefox dung `inputmode=mozAwesomebar` ma GTK ha thanh FREE_FORM+h0x40. Cac o
-chat/input co spellcheck/autocapitalize (gom VS Code add-on) gui h0x40 hoac
-h0x41. Engine latch dau van tay nay va dung DIRECT ngay khi surrounding-text
-duoc xac nhan, nen khong kich hoat composition/predict. Neu user Tab/go nhanh
-va phim dau tien den truoc surrounding, app tu chen raw key con bridge ghi no
-vao state UniKey; khi caps toi, handoff sang DIRECT ma khong reset am tiet.
-Editing/BackSpace truoc caps moi reject candidate vi chua biet caret/range.
-Surrounding van bat buoc, password/terminal duoc uu tien truoc. FREE_FORM +
-surrounding + hints=0 khong du phan biet `input=text` voi textarea an cua
-xterm.js, nen profile general giu PREEDIT va khong vao DIRECT. Profile zsh
-khong doan tu caps: no nhan focus event ro rang tu shell integration.
+Chromium khai address bar bang purpose=URL; Firefox dung
+`inputmode=mozAwesomebar` ma GTK ha thanh FREE_FORM+h0x40. Chi hai dau van tay
+nay vao DIRECT, va surrounding-text van la dieu kien bat buoc. Hint h0x41,
+h0x45 va cac purpose ALPHA/EMAIL/NAME thuoc general/PREEDIT; vi vay Gmail, form
+web va VS Code chat khong con doi mode theo thu tu metadata cua tung cua so.
+Password va terminal luon OFF. Profile zsh khong doan tu caps: no nhan focus
+event ro rang tu shell integration.
 
 Module GTK3/GTK4/Qt luon dung PREEDIT: chung khong hien thuc callback xoa.
 
@@ -260,10 +255,8 @@ Trong che do DIRECT, ky tu thuong cung phai TU COMMIT chu khong tra ve cho
 ung dung tu chen: neu khong, ky tu di duong su kien ban phim con lenh xoa di
 duong input-method, va khi go nhanh se dao thu tu ("đấy" ra "đâdấyd").
 
-Client khai purpose=TERMINAL thi tuan theo `TerminalMode`:
-
-    TerminalMode = Off       # mac dinh: tat bo go trong terminal
-    TerminalMode = Preedit   # go tieng Viet, khong gach chan
+Client khai purpose=TERMINAL luon tat bo go. Truong `TerminalMode` cu van duoc
+parser doc de tuong thich file options, nhung IBus policy khong con dung no.
 
 IBus/VTE tren Ubuntu 26.04 co the gui `purpose=TERMINAL` roi reset ve
 `FREE_FORM` trong cung focus. Engine latch TERMINAL den focus-out de lan reset
@@ -284,7 +277,7 @@ Neu cai bang `install-standalone.sh`, duong dan la:
 
 Sau do chay `exec zsh` hoac mo terminal moi. Day la buoc kich hoat mot lan,
 khong phai chon profile thu cong: tu luc do engine tu chuyen zsh-terminal khi
-focus terminal, firefox-web khi focus address bar/chat, va general o noi khac.
+focus terminal, browser-address khi focus address bar, va general o noi khac.
 Neu bo qua buoc nay, terminal tich hop VS Code se tiep tuc dung PREEDIT.
 
 Integration bat focus-reporting chi khi ZLE dang doc command line, va tat no
@@ -298,8 +291,7 @@ Go roi: touch ~/.unikey/debug && ibus restart
 
 Smoke test VTE sau khi cai engine moi va `ibus restart`:
 
-    python3 src/unikey-ibus/vte-smoke.py --terminal-mode off
-    python3 src/unikey-ibus/vte-smoke.py --terminal-mode preedit
+    python3 src/unikey-ibus/vte-smoke.py
 
 
 7. Phim tat
