@@ -54,8 +54,6 @@ struct UkSharedMem {
 
 enum VnWordForm {vnw_nonVn, vnw_empty, vnw_c, vnw_v, vnw_cv, vnw_vc, vnw_cvc};
 
-typedef void (* CheckKeyboardCaseCb)(int *pShiftPressed, int *pCapslockOn);
-
 struct KeyBufEntry {
     UkKeyEvent ev;
     bool converted;
@@ -70,15 +68,19 @@ public:
         m_pCtrl = p;
     }
 
-    void setCheckKbCaseFunc(CheckKeyboardCaseCb pFunc) 
+    void setKeyboardCase(int shiftPressed, int capsLockOn)
     {
-        m_keyCheckFunc = pFunc;
+        m_shiftPressed = shiftPressed;
+        m_capsLockOn = capsLockOn;
     }
 
     bool atWordBeginning();
 
     int process(unsigned int keyCode, int & backs, unsigned char *outBuf, int & outSize, UkOutputType & outType);
     void pass(int keyCode); //just pass through without filtering
+    bool isRevisionKey(unsigned int keyCode);
+    int reviseWord(const unsigned int *word, int length, unsigned int keyCode,
+                   unsigned char *outBuf, int &outSize);
     void setSingleMode();
 
     int processBackspace(int & backs, unsigned char *outBuf, int & outSize, UkOutputType & outType);
@@ -99,8 +101,10 @@ public:
     int processEscChar(UkKeyEvent & ev);
 
 protected:
-    static bool m_classInit;
-    CheckKeyboardCaseCb m_keyCheckFunc;
+    int m_shiftPressed = 0;
+    int m_capsLockOn = 0;
+    bool m_wUsedAsMapChar = false;
+    bool m_revisingWord = false;
     UkSharedMem *m_pCtrl;
 
     int m_changePos;
@@ -162,5 +166,6 @@ protected:
 };
 
 void SetupUnikeyEngine();
+VnLexiName UnikeyUnicodeLetter(unsigned int unicode);
 
 #endif

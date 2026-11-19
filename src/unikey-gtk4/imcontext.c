@@ -56,6 +56,38 @@ static void on_preedit_changed(void *user_data, const char *utf8)
 
 static const UkBridgeVTable BridgeVTable = { on_commit, on_preedit_changed };
 
+static gboolean uk_im_context_revise_word(GtkIMContext *context, guint32 key,
+                                          GtkInputPurpose purpose)
+{
+    UkImContext *self = UK_IM_CONTEXT(context);
+    GtkInputHints hints;
+    char *text = NULL;
+    int cursor, anchor;
+    UkWordEdit edit;
+    gboolean changed;
+
+    if (!uk_bridge_can_revise_word(self->bridge, key) ||
+        (purpose != GTK_INPUT_PURPOSE_FREE_FORM &&
+         purpose != GTK_INPUT_PURPOSE_ALPHA &&
+         purpose != GTK_INPUT_PURPOSE_NAME))
+        return FALSE;
+
+    g_object_get(context, "input-hints", &hints, NULL);
+    if ((hints & GTK_INPUT_HINT_PRIVATE) ||
+        !gtk_im_context_get_surrounding_with_selection(context, &text, &cursor, &anchor))
+        return FALSE;
+
+    changed = cursor > 0 && cursor == anchor &&
+              uk_bridge_revise_word(self->bridge, text, cursor, key, &edit);
+    g_free(text);
+    if (!changed ||
+        !gtk_im_context_delete_surrounding(context, -edit.before, edit.before + edit.after))
+        return FALSE;
+
+    on_commit(self, edit.text);
+    return TRUE;
+}
+
 /*--------------------------------------------------------------------*/
 static gboolean uk_im_context_filter_keypress(GtkIMContext *context, GdkEvent *event)
 {
@@ -65,10 +97,17 @@ static gboolean uk_im_context_filter_keypress(GtkIMContext *context, GdkEvent *e
     UkKeyInfo ki;
     guint keyval;
     guint32 uch;
+    GtkInputPurpose purpose;
 
     type = gdk_event_get_event_type(event);
     if (type != GDK_KEY_PRESS && type != GDK_KEY_RELEASE)
         return FALSE;
+
+    g_object_get(context, "input-purpose", &purpose, NULL);
+    if (purpose == GTK_INPUT_PURPOSE_PASSWORD || purpose == GTK_INPUT_PURPOSE_PIN) {
+        uk_bridge_reset(self->bridge);
+        return FALSE;
+    }
 
     keyval = gdk_key_event_get_keyval(event);
     state  = gdk_event_get_modifier_state(event);
@@ -111,6 +150,9 @@ static gboolean uk_im_context_filter_keypress(GtkIMContext *context, GdkEvent *e
         uk_bridge_flush(self->bridge);
         return FALSE;
     }
+
+    if (uk_im_context_revise_word(context, uch, purpose))
+        return TRUE;
 
     return uk_bridge_key(self->bridge, uch,
                          (state & GDK_SHIFT_MASK) ? 1 : 0,

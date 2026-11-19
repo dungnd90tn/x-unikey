@@ -294,8 +294,22 @@ Smoke test VTE sau khi cai engine moi va `ibus restart`:
     python3 src/unikey-ibus/vte-smoke.py
 
 
-7. Phim tat
------------
+7. Sua dau tren tu da go
+-----------------------
+
+Dat con tro trong hoac ngay sau am tiet da go trong o van ban, roi bam phim
+dau cua kieu go dang dung. Vi du, voi Telex, bam f trong "mua" de sua thanh
+"mùa", bam s trong "tiêng" de sua thanh "tiếng", hoac bam z trong "tiếng"
+de bo dau thanh va giu "tiêng". Bam lai phim cua dau dang co se bo dau do.
+Phim chu khong tao duoc bien doi van duoc go binh thuong.
+
+Tinh nang ap dung cho IBus, module GTK4 va Qt6 khi ung dung cung cap van ban
+quanh con tro va ho tro phep thay the. Vung chon tiep tuc dung thao tac
+nhap thay the cua ung dung. Qt6 giu vi tri con tro. IBus va GTK4 co the
+dua con tro den cuoi am tiet neu phai sua phan ben phai con tro.
+
+7.a Phim tat
+------------
 
     Ctrl-Shift          bat/tat tieng Viet
     Ctrl-Shift-F5..F8   Telex / VNI / VIQR / kieu tu dinh nghia

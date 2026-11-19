@@ -1,3 +1,9 @@
+19.11.2026: 1.0.4-17
+  + Added direct tone edits in already committed Vietnamese syllables on
+    IBus, GTK4 and Qt6.
+  + Fixed IBus word revision after focus changes when client capabilities
+    and content type stay the same.
+
 28.8.2026: 1.0.4-16
   + Simplified automatic IBus profiles:
      - terminals use OFF;

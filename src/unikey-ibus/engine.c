@@ -104,6 +104,9 @@ struct _UkIBusEngine {
     guint      hints;
     gboolean   preedit_visible;
     gboolean   capabilities_known;
+    IBusText   *surrounding_text;
+    guint      surrounding_cursor;
+    guint      surrounding_anchor;
     gboolean   saw_terminal_purpose;
     gboolean   saw_address_purpose;
     UkBrowserAddressState browser_address;
@@ -128,6 +131,7 @@ static void on_commit(void *user_data, const char *utf8)
 {
     UkIBusEngine *self = (UkIBusEngine *)user_data;
     IBusText *text = ibus_text_new_from_string(utf8);
+    g_clear_object(&self->surrounding_text);
     uk_log("engine=%p direct-commit chars=%ld", (void *)self,
            (long)g_utf8_strlen(utf8, -1));
     ibus_engine_commit_text(IBUS_ENGINE(self), text);
@@ -145,6 +149,7 @@ static void on_commit_preedit(void *user_data, const char *utf8)
     UkIBusEngine *self = (UkIBusEngine *)user_data;
     IBusText *text;
 
+    g_clear_object(&self->surrounding_text);
     uk_log("engine=%p preedit-commit chars=%ld", (void *)self,
            (long)g_utf8_strlen(utf8, -1));
     text = ibus_text_new_from_string(utf8);
@@ -159,6 +164,7 @@ static void on_commit_preedit(void *user_data, const char *utf8)
 static void on_erase_before_cursor(void *user_data, int nchars)
 {
     UkIBusEngine *self = (UkIBusEngine *)user_data;
+    g_clear_object(&self->surrounding_text);
     /* offset am = lui ve truoc con tro */
     uk_log("engine=%p direct-delete chars=%d", (void *)self, nchars);
     ibus_engine_delete_surrounding_text(IBUS_ENGINE(self), -nchars, (guint)nchars);
@@ -419,13 +425,27 @@ static void uk_ibus_engine_property_activate(IBusEngine *engine,
 /*--------------------------------------------------------------------
   Xu ly phim
  --------------------------------------------------------------------*/
+static gboolean uk_ibus_engine_is_browser_address(const UkIBusEngine *self)
+{
+    return self->browser_address == UK_BROWSER_ADDRESS_CONFIRMED ||
+           (self->browser_address == UK_BROWSER_ADDRESS_NONE &&
+            self->purpose == IBUS_INPUT_PURPOSE_FREE_FORM &&
+            uk_ibus_policy_is_firefox_address_hints(self->hints));
+}
+
+static gboolean uk_ibus_engine_is_terminal(const UkIBusEngine *self)
+{
+    return self->purpose == IBUS_INPUT_PURPOSE_TERMINAL ||
+           self->saw_terminal_purpose || self->zsh_terminal_active;
+}
+
 static void uk_ibus_engine_note_context_input(UkIBusEngine *self)
 {
-    UkBrowserAddressState old_state = self->browser_address;
-
-    self->browser_address = uk_ibus_policy_note_input(
-        self->browser_address, self->mode == UK_IBUS_MODE_DIRECT);
-    if (old_state != self->browser_address) {
+    if (uk_ibus_engine_is_browser_address(self) &&
+        uk_ibus_policy_note_input(UK_BROWSER_ADDRESS_CONFIRMED,
+                                  self->mode == UK_IBUS_MODE_DIRECT) ==
+            UK_BROWSER_ADDRESS_REJECTED) {
+        self->browser_address = UK_BROWSER_ADDRESS_REJECTED;
         uk_log("engine=%p browser-address=rejected reason=input-before-direct",
                (void *)self);
         /* CONFIRMED nhung chua co surrounding dang o OFF. Khi phim dau tien
@@ -433,6 +453,56 @@ static void uk_ibus_engine_note_context_input(UkIBusEngine *self)
            ky tu raw lot vao app roi moi chuyen DIRECT sau do. */
         uk_ibus_engine_update_mode(self, "input-before-direct");
     }
+}
+
+static gboolean uk_ibus_engine_is_secret(const UkIBusEngine *self)
+{
+#if IBUS_CHECK_VERSION(1, 5, 34)
+    if (self->hints & IBUS_INPUT_HINT_HIDDEN_TEXT)
+        return TRUE;
+#endif
+    return self->purpose == IBUS_INPUT_PURPOSE_PASSWORD ||
+           self->purpose == IBUS_INPUT_PURPOSE_PIN;
+}
+
+static gboolean uk_ibus_engine_allows_revision(const UkIBusEngine *self)
+{
+    if (!self->focused || self->mode != UK_IBUS_MODE_PREEDIT ||
+        !(self->capabilities & IBUS_CAP_SURROUNDING_TEXT) ||
+        (self->purpose != IBUS_INPUT_PURPOSE_FREE_FORM &&
+         self->purpose != IBUS_INPUT_PURPOSE_ALPHA &&
+         self->purpose != IBUS_INPUT_PURPOSE_NAME))
+        return FALSE;
+
+#if IBUS_CHECK_VERSION(1, 5, 34)
+    if (self->hints & (IBUS_INPUT_HINT_PRIVATE | IBUS_INPUT_HINT_HIDDEN_TEXT))
+        return FALSE;
+#endif
+    return TRUE;
+}
+
+static gboolean uk_ibus_engine_revise_word(UkIBusEngine *self, guint32 key)
+{
+    IBusEngine *engine = IBUS_ENGINE(self);
+    guint cursor = self->surrounding_cursor;
+    UkWordEdit edit;
+    const char *text, *caret;
+
+    if (!self->surrounding_text || cursor != self->surrounding_anchor ||
+        !uk_bridge_can_revise_word(self->bridge, key))
+        return FALSE;
+
+    text = ibus_text_get_text(self->surrounding_text);
+    if (!text || cursor > g_utf8_strlen(text, -1))
+        return FALSE;
+    caret = g_utf8_offset_to_pointer(text, cursor);
+    if (!uk_bridge_revise_word(self->bridge, text, caret - text, key, &edit))
+        return FALSE;
+
+    ibus_engine_delete_surrounding_text(engine, -edit.before,
+                                       (guint)(edit.before + edit.after));
+    on_commit(self, edit.text);
+    return TRUE;
 }
 
 static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
@@ -447,6 +517,9 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
     (void)keycode;
     uch = 0;
 
+    if (uk_ibus_engine_is_secret(self) || uk_ibus_engine_is_terminal(self))
+        return FALSE;
+
     /* Text-entry candidate co the nhan phim dau tien truoc caps surrounding
        khi user Tab/go nhanh. Cho app tu chen raw key, nhung ghi no vao state
        UniKey de luc caps toi va handoff sang DIRECT van sua dung ca am tiet.
@@ -458,15 +531,12 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
         (keyval == IBUS_KEY_BackSpace || uk_keys_is_editing(keyval) ||
          uk_keys_is_keypad_digit(keyval) || ibus_keyval_to_unicode(keyval) != 0)) {
         uch = ibus_keyval_to_unicode(keyval);
-        if ((self->saw_address_purpose ||
-             self->browser_address == UK_BROWSER_ADDRESS_CONFIRMED) &&
+        if ((self->purpose == IBUS_INPUT_PURPOSE_URL ||
+             self->saw_address_purpose || uk_ibus_engine_is_browser_address(self)) &&
             uch != 0 && uch <= 0xFF &&
             keyval != IBUS_KEY_BackSpace && !uk_keys_is_editing(keyval) &&
             !uk_keys_is_keypad_digit(keyval)) {
-            uk_bridge_note_passthrough_key(
-                self->bridge, uch,
-                (modifiers & IBUS_SHIFT_MASK) ? 1 : 0,
-                (modifiers & IBUS_LOCK_MASK) ? 1 : 0);
+            uk_bridge_note_passthrough_key(self->bridge, uch);
             uk_log("engine=%p pending-direct raw-key", (void *)self);
             return FALSE;
         }
@@ -498,22 +568,26 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
         return FALSE;
 
     if (modifiers & (IBUS_CONTROL_MASK | IBUS_MOD1_MASK | IBUS_SUPER_MASK)) {
+        g_clear_object(&self->surrounding_text);
         uk_bridge_flush(self->bridge);
         return FALSE;
     }
 
     if (keyval == IBUS_KEY_BackSpace) {
+        g_clear_object(&self->surrounding_text);
         uk_ibus_engine_note_context_input(self);
         return uk_bridge_backspace(self->bridge) == UK_BRIDGE_CONSUMED;
     }
 
     if (uk_keys_is_editing(keyval)) {
+        g_clear_object(&self->surrounding_text);
         uk_ibus_engine_note_context_input(self);
         uk_bridge_flush(self->bridge);
         return FALSE;
     }
 
     if (uk_keys_is_keypad_digit(keyval)) {
+        g_clear_object(&self->surrounding_text);
         uk_ibus_engine_note_context_input(self);
         uk_bridge_flush(self->bridge);
         return FALSE;
@@ -525,6 +599,10 @@ static gboolean uk_ibus_engine_process_key_event(IBusEngine *engine,
 
     uk_ibus_engine_note_context_input(self);
 
+    if (uk_ibus_engine_revise_word(self, uch))
+        return TRUE;
+
+    g_clear_object(&self->surrounding_text);
     return uk_bridge_key(self->bridge, uch,
                          (modifiers & IBUS_SHIFT_MASK) ? 1 : 0,
                          (modifiers & IBUS_LOCK_MASK) ? 1 : 0) == UK_BRIDGE_CONSUMED;
@@ -583,18 +661,13 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
     UkIBusMode old_mode;
     UkIBusMode new_mode;
 
-    is_secret = (self->purpose == IBUS_INPUT_PURPOSE_PASSWORD ||
-                 self->purpose == IBUS_INPUT_PURPOSE_PIN);
-#if IBUS_CHECK_VERSION(1, 5, 34)
-    if ((self->hints & IBUS_INPUT_HINT_HIDDEN_TEXT) != 0)
-        is_secret = TRUE;
-#endif
+    is_secret = uk_ibus_engine_is_secret(self);
     profile = uk_ibus_policy_select_profile(
         self->zsh_terminal_active,
-        self->browser_address == UK_BROWSER_ADDRESS_CONFIRMED);
-    is_terminal = self->saw_terminal_purpose ||
-        profile == UK_IBUS_PROFILE_ZSH_TERMINAL;
-    is_direct_entry = self->saw_address_purpose ||
+        uk_ibus_engine_is_browser_address(self));
+    is_terminal = uk_ibus_engine_is_terminal(self);
+    is_direct_entry = self->purpose == IBUS_INPUT_PURPOSE_URL ||
+        self->saw_address_purpose ||
         profile == UK_IBUS_PROFILE_BROWSER_ADDRESS;
     can_surround = (self->capabilities & IBUS_CAP_SURROUNDING_TEXT) != 0;
     fallback_preedit =
@@ -605,6 +678,8 @@ static void uk_ibus_engine_update_mode(UkIBusEngine *self, const char *reason)
                                      self->capabilities_known, can_surround,
                                      fallback_preedit);
     self->mode = new_mode;
+    if (!uk_ibus_engine_allows_revision(self))
+        g_clear_object(&self->surrounding_text);
 
     if (self->focused && (!self->mode_applied || old_mode != new_mode)) {
         if (new_mode == UK_IBUS_MODE_OFF) {
@@ -729,11 +804,9 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     UkIBusEngine *self = (UkIBusEngine *)engine;
 
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->focus_in(engine);
-    /* Khong mang purpose/capability cua focus truoc sang context moi. */
-    self->capabilities = 0;
-    self->purpose = IBUS_INPUT_PURPOSE_FREE_FORM;
-    self->hints = IBUS_INPUT_HINT_NONE;
-    self->capabilities_known = FALSE;
+    /* IBus resends capabilities and content type only when they change.
+       The text and latches belong to one focus, so clear them here. */
+    g_clear_object(&self->surrounding_text);
     self->saw_terminal_purpose = FALSE;
     self->saw_address_purpose = FALSE;
     self->browser_address = UK_BROWSER_ADDRESS_NONE;
@@ -743,6 +816,8 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     self->mode_applied = FALSE;
     uk_bridge_reset(self->bridge);
     uk_ibus_engine_update_mode(self, "focus-in");
+    if (self->mode != UK_IBUS_MODE_OFF)
+        ibus_engine_get_surrounding_text(engine, NULL, NULL, NULL);
     ibus_engine_register_properties(engine, self->properties);
     uk_ibus_engine_sync_properties(self, TRUE);
 }
@@ -754,6 +829,7 @@ static void uk_ibus_engine_focus_out(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    g_clear_object(&self->surrounding_text);
     self->saw_terminal_purpose = FALSE;
     self->saw_address_purpose = FALSE;
     self->browser_address = UK_BROWSER_ADDRESS_NONE;
@@ -771,6 +847,7 @@ static void uk_ibus_engine_reset(IBusEngine *engine)
 {
     UkIBusEngine *self = (UkIBusEngine *)engine;
 
+    g_clear_object(&self->surrounding_text);
     if (self->focused)
         uk_bridge_reset(self->bridge);
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->reset(engine);
@@ -784,6 +861,20 @@ static void uk_ibus_engine_set_capabilities(IBusEngine *engine, guint caps)
     self->capabilities_known = TRUE;
     IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->set_capabilities(engine, caps);
     uk_ibus_engine_update_mode(self, "capabilities");
+}
+
+static void uk_ibus_engine_set_surrounding_text(IBusEngine *engine,
+                                               IBusText *text, guint cursor,
+                                               guint anchor)
+{
+    UkIBusEngine *self = (UkIBusEngine *)engine;
+    IBUS_ENGINE_CLASS(uk_ibus_engine_parent_class)->set_surrounding_text(
+        engine, text, cursor, anchor);
+    if (uk_ibus_engine_allows_revision(self)) {
+        g_set_object(&self->surrounding_text, text);
+        self->surrounding_cursor = cursor;
+        self->surrounding_anchor = anchor;
+    }
 }
 
 static void uk_ibus_engine_set_content_type(IBusEngine *engine,
@@ -831,6 +922,7 @@ static void uk_ibus_engine_disable(IBusEngine *engine)
     if (self->focused)
         uk_bridge_flush(self->bridge);
     self->preedit_visible = FALSE;
+    g_clear_object(&self->surrounding_text);
     self->saw_terminal_purpose = FALSE;
     self->saw_address_purpose = FALSE;
     self->browser_address = UK_BROWSER_ADDRESS_NONE;
@@ -898,6 +990,7 @@ static void uk_ibus_engine_destroy(IBusObject *object)
         self->profile_monitor = NULL;
     }
     g_clear_pointer(&self->profile_event_path, g_free);
+    g_clear_object(&self->surrounding_text);
     if (self->properties) {
         g_object_unref(self->prop_input_mode);
         g_object_unref(self->prop_telex);
@@ -927,6 +1020,7 @@ static void uk_ibus_engine_class_init(UkIBusEngineClass *klass)
     engine->enable            = uk_ibus_engine_enable;
     engine->disable           = uk_ibus_engine_disable;
     engine->set_capabilities  = uk_ibus_engine_set_capabilities;
+    engine->set_surrounding_text = uk_ibus_engine_set_surrounding_text;
     engine->set_content_type  = uk_ibus_engine_set_content_type;
     engine->property_activate = uk_ibus_engine_property_activate;
 }

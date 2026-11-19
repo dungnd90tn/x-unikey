@@ -95,8 +95,6 @@ _ascVnLexi AscVnLexiList[] = {
 
 VnLexiName IsoVnLexiMap[256];
 
-bool ClassifierTableInitialized = false;
-
 DllExport UkKeyMapping TelexMethodMapping[] = {
     {'Z', vneTone0},
     {'S', vneTone1},
@@ -190,7 +188,7 @@ DllExport UkKeyMapping MsViMethodMapping[] = {
 };
 
 //-------------------------------------------
-void SetupInputClassifierTable()
+static void initInputClassifierTable()
 {
   unsigned int c;
   int i;
@@ -247,12 +245,15 @@ void SetupInputClassifierTable()
 }
 
 //-------------------------------------------
+void SetupInputClassifierTable()
+{
+  static const bool initialized = (initInputClassifierTable(), true);
+  (void)initialized;
+}
+
 void UkInputProcessor::init()
 {
-  if (!ClassifierTableInitialized) {
-    SetupInputClassifierTable();
-    ClassifierTableInitialized = true;
-  }
+  SetupInputClassifierTable();
   setIM(UkTelex);
 }
 

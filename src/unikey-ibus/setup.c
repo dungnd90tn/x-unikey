@@ -40,7 +40,7 @@ typedef struct {
     GtkEntry *keymap_file;
 } SetupApp;
 
-static gboolean KeymapValidatorInitialized = FALSE;
+static UnikeySession *KeymapValidator;
 
 static void free_option_strings(UkXimOpt *opt)
 {
@@ -56,10 +56,8 @@ static void app_clear(SetupApp *app)
     g_free(app->config_dir);
     g_free(app->options_path);
     g_free(app->state_path);
-    if (KeymapValidatorInitialized) {
-        UnikeyCleanup();
-        KeymapValidatorInitialized = FALSE;
-    }
+    UnikeyDestroy(KeymapValidator);
+    KeymapValidator = NULL;
 }
 
 static gboolean app_init_paths(SetupApp *app, GError **error)
@@ -173,11 +171,9 @@ static gboolean path_round_trips_config(const char *path)
 
 static gboolean user_keymap_is_valid(const char *path)
 {
-    if (!KeymapValidatorInitialized) {
-        UnikeySetup();
-        KeymapValidatorInitialized = TRUE;
-    }
-    return UnikeyLoadUserKeyMap(path) != 0;
+    if (!KeymapValidator)
+        KeymapValidator = UnikeyCreate();
+    return KeymapValidator && UnikeyLoadUserKeyMap(KeymapValidator, path);
 }
 
 static void set_file_error(GError **error, const char *format,

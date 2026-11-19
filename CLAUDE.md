@@ -37,8 +37,8 @@ keysyms — `GDK_KEY_*` and `IBUS_KEY_*` are the same numbers), config parsing
 toolkit's event type and render the result. If you find yourself writing typing logic in a
 front-end, it belongs in `ukbridge`.
 
-`ukinterface` holds one process-global `UkEngine`; `uk_bridge_reset()` on focus-in keeps contexts
-from bleeding into each other. `UkSharedMem` ([ukengine.h](src/ukengine/ukengine.h)) is
+`ukinterface` creates one `UkEngine` per `UkBridge`. Word revision uses a temporary engine with
+the same input method and options. `UkSharedMem` ([ukengine.h](src/ukengine/ukengine.h)) is
 deliberately pointer-free because the Windows build puts it in shared memory — don't add pointers.
 
 Input methods are *tables* (`UkKeyMapping[]` in [inputproc.h](src/ukengine/inputproc.h)), and
@@ -49,8 +49,8 @@ edit, not new code.
 and panel property open that same executable; it is not an autostart/status UI and does not need
 an application `.desktop` launcher. It writes the shared `~/.unikey/options` atomically and
 preserves the first pre-rewrite file as `options.bak`. Only `state` (enabled/input method) reloads
-live: do not watch/reload all options from every `UkBridge`, because `ukinterface` has one
-process-global engine and an unfocused context could reset a focused context's composition.
+live. Each `UkBridge` loads static options when created so a settings write during composition
+does not change how an active syllable is interpreted.
 `UkXimOpt` scalar fields and `BoolOpt`/`LookupOpt` accesses must remain `int`; writing them as
 `long` corrupts adjacent fields on 64-bit systems. Modern frontends must keep output fixed to
 UTF-8, and global DIRECT/PREEDIT is deliberately not configurable.

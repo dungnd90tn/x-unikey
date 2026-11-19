@@ -72,6 +72,13 @@ static gboolean uk_im_context_filter_keypress(GtkIMContext *context, GdkEventKey
     UkImContext *self = UK_IM_CONTEXT(context);
     UkKeyInfo ki;
     guint32 uch;
+    GtkInputPurpose purpose;
+
+    g_object_get(context, "input-purpose", &purpose, NULL);
+    if (purpose == GTK_INPUT_PURPOSE_PASSWORD || purpose == GTK_INPUT_PURPOSE_PIN) {
+        uk_bridge_reset(self->bridge);
+        return FALSE;
+    }
 
     /* Bang phim tat nam trong ukbridge (ukkeys.c) de GTK3/GTK4/Qt dung chung. */
     ki.keysym   = ev->keyval;
@@ -154,8 +161,6 @@ static void uk_im_context_focus_in(GtkIMContext *context)
 {
     UkImContext *self = UK_IM_CONTEXT(context);
     self->has_focus = TRUE;
-    /* Engine la mot instance dung chung ca tien trinh: doi o nhap thi phai
-       xoa trang thai cu, neu khong am tiet cua o truoc se ro ri sang. */
     uk_bridge_reset(self->bridge);
 }
 

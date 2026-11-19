@@ -210,7 +210,7 @@ static void check_pending_direct_handoff(void)
     b = uk_bridge_new(&DirectVTable, &f);
     uk_bridge_set_enabled(b, 1);
     uk_bridge_set_input_method(b, UkTelex);
-    uk_bridge_note_passthrough_key(b, 'd', 0, 0);
+    uk_bridge_note_passthrough_key(b, 'd');
     uk_bridge_set_direct_mode(b, 1); /* caps surrounding den */
     uk_bridge_key(b, 'd', 0, 0);
     uk_bridge_key(b, 'a', 0, 0);
@@ -927,8 +927,7 @@ static void check_config_parser(void)
 }
 
 /* Options la cau hinh tinh. Moi context co mot inotify fd rieng nhung loi
-   UniKey la singleton theo tien trinh; context khong focus tuyet doi khong
-   duoc reload/reset engine global giua composition cua context dang focus. */
+   Context nen khong duoc ap options tinh vua ghi vao composition dang go. */
 static void check_options_do_not_reload_mid_composition(void)
 {
     FakeEntry focused_entry, background_entry;
@@ -965,9 +964,92 @@ static void check_options_do_not_reload_mid_composition(void)
     if (ok)
         printf("  ok   options tinh: context nen khong reset composition\n");
     else {
-        printf("  FAIL options reload lam lech singleton/context\n");
+        printf("  FAIL options reload lam lech composition\n");
         Failures++;
     }
+}
+
+static void check_session_isolation(void)
+{
+    FakeEntry first = {0}, second = {0};
+    UkBridge *focused = uk_bridge_new(&FakeVTable, &first);
+    UkBridge *other;
+
+    uk_bridge_set_enabled(focused, 1);
+    uk_bridge_set_input_method(focused, UkTelex);
+    type_ascii(focused, "tie");
+    other = uk_bridge_new(&FakeVTable, &second);
+    uk_bridge_set_input_method(other, UkVni);
+    type_ascii(other, "vie65t");
+    uk_bridge_flush(other);
+    type_ascii(focused, "engs");
+
+    if (strcmp(first.preedit, "tiếng") == 0 && strcmp(second.committed, "việt") == 0)
+        puts("  ok   composition giua hai context doc lap");
+    else {
+        printf("  FAIL context doc lap: %s / %s\n", first.preedit, second.committed);
+        Failures++;
+    }
+    uk_bridge_free(other);
+    uk_bridge_free(focused);
+}
+
+static void check_word_revision(void)
+{
+    static const struct {
+        int method;
+        const char *surrounding;
+        const char *prefix;
+        unsigned int key;
+        int before, after;
+        const char *replacement;
+    } cases[] = {
+        {UkTelex, "mua cơm", "m", 'f', 1, 2, "mùa"},
+        {UkTelex, "mua cơm", "mu", 'f', 2, 0, "mù"},
+        {UkTelex, "mua cơm", "mua", 'f', 3, 0, "mùa"},
+        {UkTelex, "đã múa cơm", "đã m\xc3", 'f', 0, 0, NULL},
+        {UkTelex, "đã múa cơm", "đã mú", 'f', 2, 0, "mù"},
+        {UkTelex, "TIẾNG Việt", "TIẾ", 'z', 3, 0, "TIÊ"},
+        {UkTelex, "tiếng Việt", "tiếng", 's', 5, 0, "tiêng"},
+        {UkTelex, "mưa", "mưa", 'a', 3, 0, NULL},
+        {UkTelex, "doi", "doi", 'o', 3, 0, "dôi"},
+        {UkTelex, "đi", "đi", 'd', 2, 0, "di"},
+        {UkVni, "cơm và nươc", "cơm và nư", '1', 2, 2, "nước"},
+        {UkVni, "nuoc", "nuoc", '7', 4, 0, "nươc"},
+        {UkViqr, "tieng", "tieng", '^', 5, 0, "tiêng"},
+        {UkTelex, "mua12", "mua", 'f', 3, 0, NULL},
+        {UkTelex, "mua\xcc\x81", "mua", 'f', 3, 0, NULL},
+        {UkTelex, "mua", "mua", 'k', 3, 0, NULL},
+        {UkTelex, "hi", "hi", 'w', 2, 0, NULL},
+        {UkTelex, "fan", "fan", 'f', 3, 0, NULL},
+    };
+    FakeEntry entry = {0};
+    UkBridge *bridge = uk_bridge_new(&FakeVTable, &entry);
+    UkWordEdit edit;
+
+    uk_bridge_set_enabled(bridge, 1);
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        uk_bridge_set_input_method(bridge, cases[i].method);
+        int changed = uk_bridge_revise_word(bridge, cases[i].surrounding,
+                                            strlen(cases[i].prefix), cases[i].key, &edit);
+        if ((!changed && !cases[i].replacement) ||
+            (changed && cases[i].replacement && strcmp(edit.text, cases[i].replacement) == 0 &&
+             edit.before == cases[i].before && edit.after == cases[i].after))
+            continue;
+
+        printf("  FAIL sua %s + %c: %s (%d, %d), mong doi %s\n",
+               cases[i].surrounding, cases[i].key, changed ? edit.text : "(giu nguyen)",
+               changed ? edit.before : 0, changed ? edit.after : 0,
+               cases[i].replacement ? cases[i].replacement : "(giu nguyen)");
+        Failures++;
+    }
+    type_ascii(bridge, "ta");
+    if (uk_bridge_revise_word(bridge, "mua", 3, 'f', &edit) ||
+        strcmp(uk_bridge_preedit(bridge), "ta") != 0) {
+        puts("  FAIL sua tu da chot xen vao preedit");
+        Failures++;
+    }
+    uk_bridge_free(bridge);
 }
 
 /*----------------------------------------------------------------*/
@@ -1036,6 +1118,8 @@ int main(void)
     check_ibus_frontend_commit();
     check_shared_state();
     check_options_do_not_reload_mid_composition();
+    check_session_isolation();
+    check_word_revision();
 
     if (Failures == 0)
         printf("=> tat ca deu dat\n");
