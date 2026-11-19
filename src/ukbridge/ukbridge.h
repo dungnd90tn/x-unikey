@@ -13,6 +13,8 @@
 #ifndef __UK_BRIDGE_H
 #define __UK_BRIDGE_H
 
+#include <stddef.h>
+
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -51,9 +53,6 @@ typedef enum {
     UK_BRIDGE_CONSUMED    /* da xu ly xong */
 } UkBridgeResult;
 
-/* Khoi tao engine dung chung cho ca tien trinh. Goi nhieu lan vo hai. */
-void uk_bridge_global_init(void);
-
 UkBridge *uk_bridge_new(const UkBridgeVTable *vt, void *user_data);
 void      uk_bridge_free(UkBridge *b);
 
@@ -64,14 +63,27 @@ UkBridgeResult uk_bridge_key(UkBridge *b, unsigned int unicode,
 /* Phim BackSpace. Tra ve PASS neu preedit rong (de app tu xoa van ban that). */
 UkBridgeResult uk_bridge_backspace(UkBridge *b);
 
+enum { UK_WORD_EDIT_MAX = 32 };
+
+typedef struct {
+    int before;
+    int after;
+    char text[UK_WORD_EDIT_MAX * 3 + 1];
+} UkWordEdit;
+
+/* Calculate a replacement for the committed word at an unselected caret.
+   Cursor is a UTF-8 byte offset. Replacement lengths count Unicode characters. */
+int uk_bridge_can_revise_word(UkBridge *b, unsigned int key);
+int uk_bridge_revise_word(UkBridge *b, const char *text, size_t cursor,
+                          unsigned int key, UkWordEdit *edit);
+
 void        uk_bridge_flush(UkBridge *b);   /* commit preedit dang co */
 void        uk_bridge_reset(UkBridge *b);   /* bo preedit, reset engine */
 const char *uk_bridge_preedit(UkBridge *b); /* luon khac NULL */
 
 /* Ghi nhan raw key ma app da tu chen trong luc DIRECT candidate dang cho
    surrounding capability. Khong commit/preedit va khong nuot phim. */
-void uk_bridge_note_passthrough_key(UkBridge *b, unsigned int unicode,
-                                    int shift_pressed, int capslock_on);
+void uk_bridge_note_passthrough_key(UkBridge *b, unsigned int unicode);
 
 /*----------------------------------------------------------------
   Hai che do lam viec
@@ -110,9 +122,6 @@ void uk_bridge_restore_keystrokes(UkBridge *b);     /* CTRL-SHIFT-ESC */
 /* Thuc thi mot UkKeyAction do uk_keys_shortcut() nhan dien (xem ukkeys.h).
    Tra ve 1 neu da nuot phim. Moi front-end goi ham nay, khong tu viet switch. */
 int  uk_bridge_apply_action(UkBridge *b, int action);
-
-/* Nap ~/.unikey/options (kieu go, spell-check, macro...). */
-void uk_bridge_load_config(UkBridge *b);
 
 /*----------------------------------------------------------------
   Trang thai dung chung giua cac tien trinh (~/.unikey/state)

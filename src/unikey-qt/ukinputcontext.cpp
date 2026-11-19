@@ -9,6 +9,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QInputMethodEvent>
+#include <QtGui/QInputMethod>
 #include <QtGui/QTextCharFormat>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QSocketNotifier>
@@ -63,7 +64,7 @@ void UkInputContext::bridgePreedit(void *user, const char *utf8)
 /*--------------------------------------------------------------------*/
 void UkInputContext::sendPreedit(const QString &text)
 {
-    QObject *fo = qGuiApp ? qGuiApp->focusObject() : nullptr;
+    QObject *fo = m_focus.data();
     if (!fo)
         return;
 
@@ -84,7 +85,7 @@ void UkInputContext::sendPreedit(const QString &text)
 
 void UkInputContext::sendCommit(const QString &text)
 {
-    QObject *fo = qGuiApp ? qGuiApp->focusObject() : nullptr;
+    QObject *fo = m_focus.data();
     if (!fo || text.isEmpty())
         return;
 
@@ -106,19 +107,69 @@ void UkInputContext::commit()
 
 void UkInputContext::setFocusObject(QObject *object)
 {
-    /* Engine dung chung ca tien trinh: doi o nhap thi phai chot phan dang go
-       cua o cu, neu khong am tiet se ro ri sang o moi. */
-    if (m_focus && m_focus != object)
+    if (m_focus == object)
+        return;
+    const QPointer<QObject> next = object;
+    if (m_focus)
         uk_bridge_flush(m_bridge);
-    m_focus = object;
+    else
+        uk_bridge_reset(m_bridge);
+    m_focus = next;
+}
+
+bool UkInputContext::reviseWord(unsigned int key)
+{
+    if (!m_focus || !uk_bridge_can_revise_word(m_bridge, key))
+        return false;
+
+    const QPointer<QObject> target = m_focus;
+    QInputMethodQueryEvent query(Qt::ImSurroundingText | Qt::ImCursorPosition |
+                                Qt::ImAnchorPosition | Qt::ImHints);
+    QCoreApplication::sendEvent(target.data(), &query);
+    if (!target || m_focus != target)
+        return false;
+
+    const Qt::InputMethodHints hints(query.value(Qt::ImHints).toInt());
+    if (hints & (Qt::ImhSensitiveData | Qt::ImhHiddenText | Qt::ImhUrlCharactersOnly |
+                 Qt::ImhEmailCharactersOnly | Qt::ImhDigitsOnly | Qt::ImhFormattedNumbersOnly |
+                 Qt::ImhDialableCharactersOnly))
+        return false;
+
+    const QString surrounding = query.value(Qt::ImSurroundingText).toString();
+    bool hasCursor, hasAnchor;
+    const int cursor = query.value(Qt::ImCursorPosition).toInt(&hasCursor);
+    const int anchor = query.value(Qt::ImAnchorPosition).toInt(&hasAnchor);
+    if (!hasCursor || !hasAnchor || cursor != anchor ||
+        cursor <= 0 || cursor > surrounding.size())
+        return false;
+
+    const QByteArray utf8 = surrounding.toUtf8();
+    const qsizetype offset = surrounding.left(cursor).toUtf8().size();
+    UkWordEdit edit;
+    if (!uk_bridge_revise_word(m_bridge, utf8.constData(), offset, key, &edit))
+        return false;
+
+    QList<QInputMethodEvent::Attribute> attributes;
+    if (edit.after)
+        attributes.append(QInputMethodEvent::Attribute(QInputMethodEvent::Selection,
+                                                       cursor, 0, QVariant()));
+    QInputMethodEvent event(QString(), attributes);
+    event.setCommitString(QString::fromUtf8(edit.text), -edit.before, edit.before + edit.after);
+    return QCoreApplication::sendEvent(target.data(), &event);
 }
 
 /*--------------------------------------------------------------------*/
 bool UkInputContext::filterEvent(const QEvent *event)
 {
     const QEvent::Type type = event->type();
-    if (type != QEvent::KeyPress && type != QEvent::KeyRelease)
+    if (!m_focus || (type != QEvent::KeyPress && type != QEvent::KeyRelease))
         return false;
+
+    const QVariant hints = QInputMethod::queryFocusObject(Qt::ImHints, QVariant());
+    if (hints.toInt() & Qt::ImhHiddenText) {
+        uk_bridge_reset(m_bridge);
+        return false;
+    }
 
     const QKeyEvent *ke = static_cast<const QKeyEvent *>(event);
     const Qt::KeyboardModifiers mods = ke->modifiers();
@@ -164,10 +215,17 @@ bool UkInputContext::filterEvent(const QEvent *event)
     const QString text = ke->text();
     if (text.isEmpty())
         return false;
+    if (text.size() != 1) {
+        uk_bridge_flush(m_bridge);
+        return false;
+    }
 
     const uint uch = text.at(0).unicode();
     if (uch < 0x20)   /* ky tu dieu khien */
         return false;
+
+    if (reviseWord(uch))
+        return true;
 
     return uk_bridge_key(m_bridge, uch,
                          (mods & Qt::ShiftModifier) ? 1 : 0,

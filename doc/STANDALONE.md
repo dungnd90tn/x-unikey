@@ -157,8 +157,8 @@ tự khôi phục từ ngoại, macro và keymap riêng.
 Mọi frontend tiếp tục dùng chung `~/.unikey/options`; setup ghi nguyên tử, giữ
 file cũ lần đầu ở `options.bak`. Kiểu gõ/trạng thái được đồng bộ ngay qua
 `~/.unikey/state`; các tùy chọn tĩnh có hiệu lực sau `ibus restart` hoặc khi ứng
-dụng dùng module GTK/Qt được mở lại. Không reload toàn bộ options giữa lúc đang
-composition vì lõi UniKey là singleton theo tiến trình. Bảng mã chỉ đọc là Unicode
+dụng dùng module GTK/Qt được mở lại. Mỗi `UkBridge` có phiên nhập riêng và nạp
+các tùy chọn tĩnh khi khởi tạo. Bảng mã chỉ đọc là Unicode
 UTF-8. DIRECT/PREEDIT/OFF vẫn là policy tự động theo từng ô nhập, không được biến
 thành công tắc toàn cục vì sẽ làm tái phát lỗi trình duyệt/terminal.
 

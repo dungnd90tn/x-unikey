@@ -288,8 +288,6 @@ UkKeyProc UkKeyProcList[vneCount] = {
 VowelSeq lookupVSeq(VnLexiName v1, VnLexiName v2 = vnl_nonVnChar, VnLexiName v3 = vnl_nonVnChar);
 ConSeq lookupCSeq(VnLexiName c1, VnLexiName c2 = vnl_nonVnChar, VnLexiName c3 = vnl_nonVnChar);
 
-bool UkEngine::m_classInit = false;
-
 //------------------------------------------------
 int tripleVowelCompare(const void *p1, const void *p2)
 {
@@ -1089,12 +1087,7 @@ inline VnLexiName vnToLower(VnLexiName x)
 //----------------------------------------------------------
 int UkEngine::processMapChar(UkKeyEvent & ev)
 {
-    int capsLockOn = 0;
-    int shiftPressed = 0;
-    if (m_keyCheckFunc)
-        m_keyCheckFunc(&shiftPressed, &capsLockOn);
-
-    if (capsLockOn)
+    if (m_capsLockOn)
         ev.vnSym = changeCase(ev.vnSym);
 
     int ret = processAppend(ev);
@@ -1173,23 +1166,18 @@ int UkEngine::processTelexW(UkKeyEvent & ev)
         return processAppend(ev);
 
     int ret;
-    static bool usedAsMapChar = false;
-    int capsLockOn = 0;
-    int shiftPressed = 0;
-    if (m_keyCheckFunc)
-        m_keyCheckFunc(&shiftPressed, &capsLockOn);
 
-    if (usedAsMapChar) {
+    if (m_wUsedAsMapChar) {
         ev.evType = vneMapChar;
         ev.vnSym = isupper(ev.keyCode)? vnl_Uh : vnl_uh;
-        if (capsLockOn)
+        if (m_capsLockOn)
             ev.vnSym = changeCase(ev.vnSym);
         ev.chType = ukcVn;
         ret = processMapChar(ev);
         if (ret == 0) {
             if (m_current >= 0)
                 m_current--;
-            usedAsMapChar = false;
+            m_wUsedAsMapChar = false;
             ev.evType = vneHookAll;
             return processHook(ev);
         }
@@ -1197,17 +1185,17 @@ int UkEngine::processTelexW(UkKeyEvent & ev)
     }
 
     ev.evType = vneHookAll;
-    usedAsMapChar = false;
+    m_wUsedAsMapChar = false;
     ret = processHook(ev);
     if (ret == 0) {
         if (m_current >= 0)
             m_current--;
         ev.evType = vneMapChar;
         ev.vnSym = isupper(ev.keyCode)? vnl_Uh : vnl_uh;
-        if (capsLockOn)
+        if (m_capsLockOn)
             ev.vnSym = changeCase(ev.vnSym);
         ev.chType = ukcVn;
-        usedAsMapChar = true;
+        m_wUsedAsMapChar = true;
         return processMapChar(ev);
     }
     return ret;
@@ -1290,6 +1278,9 @@ int UkEngine::checkEscapeVIQR(UkKeyEvent & ev)
 //----------------------------------------------------------
 int UkEngine::processAppend(UkKeyEvent & ev)
 {
+    if (m_revisingWord)
+        return 0;
+
     int ret = 0;
     switch (ev.chType) {
     case ukcReset:
@@ -1695,9 +1686,76 @@ int UkEngine::processEscChar(UkKeyEvent & ev)
 //----------------------------------------------------------
 void UkEngine::pass(int keyCode)
 {
-    UkKeyEvent ev;
-    m_pCtrl->input.keyCodeToEvent(keyCode, ev);
+    UkKeyEvent ev{};
+    m_pCtrl->input.keyCodeToSymbol(keyCode, ev);
+    if (ev.chType == ukcWordBreak || ev.chType == ukcReset) {
+        reset();
+        return;
+    }
+    prepareBuffer();
+    m_changePos = m_current + 1;
+    m_backs = 0;
     processAppend(ev);
+}
+
+VnLexiName UnikeyUnicodeLetter(unsigned int unicode)
+{
+    if (unicode < 0x80)
+        return IsoToVnLexi(unicode);
+
+    for (int i = 0; i < vnl_lastChar; i++) {
+        if (UnicodeTable[i] == unicode)
+            return static_cast<VnLexiName>(i);
+    }
+    return vnl_nonVnChar;
+}
+
+bool UkEngine::isRevisionKey(unsigned int keyCode)
+{
+    UkKeyEvent key{};
+    m_pCtrl->input.keyCodeToEvent(keyCode, key);
+    return key.evType <= vne_telex_w;
+}
+
+int UkEngine::reviseWord(const unsigned int *word, int length, unsigned int keyCode,
+                        unsigned char *outBuf, int &outSize)
+{
+    UkKeyEvent key{};
+    m_pCtrl->input.keyCodeToEvent(keyCode, key);
+    if (key.evType > vne_telex_w || length < 1 || length > MAX_UK_ENGINE - 10)
+        return 0;
+
+    // Load the visible letters literally. Only the new key uses the keymap.
+    reset();
+    for (int i = 0; i < length; i++) {
+        const VnLexiName letter = UnikeyUnicodeLetter(word[i]);
+        if (letter == vnl_nonVnChar)
+            return 0;
+        const unsigned int root = UnicodeTable[StdVnRootChar[letter]];
+        if (m_pCtrl->input.getCharType(root) != ukcVn)
+            return 0;
+        UkKeyEvent symbol = {vneNormal, ukcVn, letter, root, 0};
+        m_changePos = m_current + 1;
+        m_backs = 0;
+        processAppend(symbol);
+    }
+    if (m_buffer[m_current].form == vnw_nonVn)
+        return 0;
+
+    // Telex W can add a literal ư while typing. Here it only changes a mark
+    // in the existing syllable, as do the other revision keys.
+    if (key.evType == vne_telex_w)
+        key.evType = vneHookAll;
+    m_backs = 0;
+    m_changePos = length;
+    m_revisingWord = true;
+    const int changed = (this->*UkKeyProcList[key.evType])(key);
+    m_revisingWord = false;
+    if (!changed || m_changePos == length || m_current != length - 1)
+        return 0;
+
+    m_changePos = 0;
+    return writeOutput(outBuf, outSize) == 0;
 }
 
 //---------------------------------------------
@@ -1982,6 +2040,7 @@ void UkEngine::reset()
     m_keyCurrent = -1;
     m_singleMode = false;
     m_toEscape = false;
+    m_wUsedAsMapChar = false;
 }
 
 //------------------------------------------------
@@ -1993,17 +2052,13 @@ void UkEngine::resetKeyBuf()
 //------------------------------------------------
 UkEngine::UkEngine()
 {
-    if (!m_classInit) {
-        engineClassInit();
-        m_classInit = true;
-    }
+    SetupUnikeyEngine();
     m_pCtrl = 0;
     m_bufSize = MAX_UK_ENGINE;
     m_keyBufSize = MAX_UK_ENGINE;
     m_current = -1;
     m_keyCurrent = -1;
     m_singleMode = false;
-    m_keyCheckFunc = 0;
     m_reverted = false;
     m_toEscape = false;
     m_keyRestored = false;
@@ -2045,12 +2100,7 @@ void UkEngine::prepareBuffer()
 //----------------------------------------------------
 int UkEngine::macroMatch(UkKeyEvent & ev)
 {
-    int capsLockOn = 0;
-    int shiftPressed = 0;
-    if (m_keyCheckFunc)
-        m_keyCheckFunc(&shiftPressed, &capsLockOn);
-
-    if (shiftPressed && (ev.keyCode ==' ' || ev.keyCode == ENTER_CHAR))
+    if (m_shiftPressed && (ev.keyCode ==' ' || ev.keyCode == ENTER_CHAR))
         return 0;
 
     const StdVnChar *pMacText = NULL;
@@ -2199,9 +2249,10 @@ void UkEngine::setSingleMode()
 }
 
 //--------------------------------------------------
-void SetupUnikeyEngine()
+static void initEngineTables()
 {
     SetupInputClassifierTable();
+    engineClassInit();
     int i;
     VnLexiName lexi;
 
@@ -2219,6 +2270,12 @@ void SetupUnikeyEngine()
             IsoStdVnCharMap[i] = lexi + VnStdCharOffset;
         }
     }
+}
+
+void SetupUnikeyEngine()
+{
+    static const bool initialized = (initEngineTables(), true);
+    (void)initialized;
 }
 
 //--------------------------------------------------

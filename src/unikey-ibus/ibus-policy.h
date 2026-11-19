@@ -2,6 +2,7 @@
 #ifndef UK_IBUS_POLICY_H
 #define UK_IBUS_POLICY_H
 
+#include <stdint.h>
 #include <string.h>
 
 /*
@@ -76,6 +77,16 @@ uk_ibus_policy_parse_profile_event(const char *text, int *zsh_active)
         return 1;
     }
     return 0;
+}
+
+/* The terminal and IBus can report the same focus change in either order.
+   Offer a real focus-in event to the next input context once. */
+static inline int
+uk_ibus_policy_take_zsh_focus(int64_t *event_time, int64_t focus_time)
+{
+    const int64_t when = *event_time;
+    *event_time = 0;
+    return when > 0 && focus_time >= when && focus_time - when <= 150000;
 }
 
 /* Chromium co the gui purpose=URL roi tra ve FREE_FORM trong cung mot focus.

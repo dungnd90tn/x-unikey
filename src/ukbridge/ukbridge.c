@@ -13,7 +13,6 @@
 
 #include "keycons.h"
 #include "unikey.h"
-#include "vnconv.h"
 #include "ukopt.h"
 #include "ukbridge.h"
 #include "ukkeys.h"
@@ -31,6 +30,7 @@ typedef struct {
 struct _UkBridge {
     UkBridgeVTable vt;
     void          *user_data;
+    UnikeySession *session;
     UkBuf          preedit;
     UkBuf          commit_buf;   /* dung cho che do DIRECT */
     int            enabled;
@@ -45,8 +45,7 @@ struct _UkBridge {
     int            user_keymap_loaded;
 };
 
-static int GlobalInited = 0;
-
+static void load_config(UkBridge *b);
 static char *state_path(void);
 static void state_write(UkBridge *b);
 static void state_read(UkBridge *b);
@@ -109,26 +108,15 @@ static void buf_chop_utf8(UkBuf *b, int n)
     b->data[b->len] = '\0';
 }
 
-/*----------------------------------------------------------------
-  Khoi tao engine dung chung. UkEngine la mot instance toan cuc trong
-  libukint, moi tien trinh chi setup mot lan.
- ----------------------------------------------------------------*/
-void uk_bridge_global_init(void)
-{
-    if (GlobalInited)
-        return;
-    UnikeySetup();
-    /* Buoc engine xuat UTF-8: front-end hien dai chi nhan UTF-8, va nho
-       vay khong phai goi vnconv o duong key-press nong. */
-    UnikeySetOutputCharset(CONV_CHARSET_XUTF8);
-    GlobalInited = 1;
-}
-
 /*----------------------------------------------------------------*/
 UkBridge *uk_bridge_new(const UkBridgeVTable *vt, void *user_data)
 {
     UkBridge *b = (UkBridge *)calloc(1, sizeof(UkBridge));
-    uk_bridge_global_init();
+    if (!b)
+        abort();
+    b->session = UnikeyCreate();
+    if (!b->session)
+        abort();
     b->vt = *vt;
     b->user_data = user_data;
     b->enabled = 1;
@@ -142,7 +130,7 @@ UkBridge *uk_bridge_new(const UkBridgeVTable *vt, void *user_data)
     b->passthrough_pending = 0;
     buf_init(&b->preedit);
     buf_init(&b->commit_buf);
-    uk_bridge_load_config(b);
+    load_config(b);
     /* Dat watch truoc snapshot state: save xay ra trong luc khoi tao se hoac
        nam trong snapshot, hoac de lai event cho lan dispatch dau tien. */
     state_watch_init(b);
@@ -158,6 +146,7 @@ void uk_bridge_free(UkBridge *b)
         close(b->inotify_fd);
     buf_free(&b->preedit);
     buf_free(&b->commit_buf);
+    UnikeyDestroy(b->session);
     free(b);
 }
 
@@ -176,31 +165,30 @@ static void emit_commit(UkBridge *b, const char *s)
 
 /*----------------------------------------------------------------
   Ap ket qua mot lan goi engine vao preedit.
-  Engine tra ve: xoa `UnikeyBackspaces` ky tu cuoi, roi noi them
-  `UnikeyBufChars` byte trong UnikeyBuf.
+  Engine tra ve so ky tu cuoi can xoa va cac byte UTF-8 can chen.
  ----------------------------------------------------------------*/
-static void apply_engine_output(UkBridge *b)
+static void apply_engine_output(UkBridge *b, const UnikeyEdit *edit)
 {
     if (b->direct_mode) {
         /* Khong co preedit: xoa thang van ban da commit roi commit phan moi.
            Day la mo hinh cua UniKey tren Windows -- nguoi dung khong thay
            gach chan va khong co trang thai "dang go do". */
-        if (UnikeyBackspaces > 0 && b->vt.erase_before_cursor)
-            b->vt.erase_before_cursor(b->user_data, UnikeyBackspaces);
-        if (UnikeyBufChars > 0) {
+        if (edit->backspaces > 0 && b->vt.erase_before_cursor)
+            b->vt.erase_before_cursor(b->user_data, edit->backspaces);
+        if (edit->size > 0) {
             /* Bo dem co gian, khong dung mang co dinh: macro co the dai toi
                MAX_MACRO_TEXT_LEN (1024) byte, mang 256 se cat cut am tham. */
             buf_clear(&b->commit_buf);
-            buf_append(&b->commit_buf, (const char *)UnikeyBuf, UnikeyBufChars);
+            buf_append(&b->commit_buf, (const char *)edit->bytes, edit->size);
             emit_commit(b, b->commit_buf.data);
         }
         return;
     }
 
-    if (UnikeyBackspaces > 0)
-        buf_chop_utf8(&b->preedit, UnikeyBackspaces);
-    if (UnikeyBufChars > 0)
-        buf_append(&b->preedit, (const char *)UnikeyBuf, UnikeyBufChars);
+    if (edit->backspaces > 0)
+        buf_chop_utf8(&b->preedit, edit->backspaces);
+    if (edit->size > 0)
+        buf_append(&b->preedit, (const char *)edit->bytes, edit->size);
 }
 
 /*----------------------------------------------------------------*/
@@ -221,7 +209,7 @@ void uk_bridge_flush(UkBridge *b)
         free(s);
     }
     b->passthrough_pending = 0;
-    UnikeyResetBuf();
+    UnikeyResetBuf(b->session);
 }
 
 void uk_bridge_reset(UkBridge *b)
@@ -231,7 +219,7 @@ void uk_bridge_reset(UkBridge *b)
         emit_preedit(b);
     }
     b->passthrough_pending = 0;
-    UnikeyResetBuf();
+    UnikeyResetBuf(b->session);
 }
 
 const char *uk_bridge_preedit(UkBridge *b)
@@ -243,13 +231,11 @@ const char *uk_bridge_preedit(UkBridge *b)
    cong bo SURROUNDING_TEXT. App tu chen raw key do; bridge chi dua no vao bo
    dem UniKey bang pass(), khong emit gi. Khi caps toi va bat DIRECT, engine
    van biet ky tu da nam truoc caret de lan bien doi sau xoa/thay dung cho. */
-void uk_bridge_note_passthrough_key(UkBridge *b, unsigned int unicode,
-                                    int shift_pressed, int capslock_on)
+void uk_bridge_note_passthrough_key(UkBridge *b, unsigned int unicode)
 {
     if (!b->enabled || unicode == 0 || unicode > 0xFF)
         return;
-    UnikeySetCapsState(shift_pressed, capslock_on);
-    UnikeyPutChar(unicode);
+    UnikeyPutChar(b->session, unicode);
     b->passthrough_pending = 1;
 }
 
@@ -270,10 +256,10 @@ UkBridgeResult uk_bridge_key(UkBridge *b, unsigned int unicode,
         return UK_BRIDGE_PASS;
     }
 
-    UnikeySetCapsState(shift_pressed, capslock_on);
-    UnikeyFilter(unicode);
+    const UnikeyEdit *edit = UnikeyFilter(b->session, unicode,
+                                          shift_pressed, capslock_on);
 
-    if (UnikeyBufChars == 0 && UnikeyBackspaces == 0) {
+    if (edit->size == 0 && edit->backspaces == 0) {
         /* Engine cho qua nguyen ven. */
         n = 0;
         if (unicode < 0x80) {
@@ -296,19 +282,120 @@ UkBridgeResult uk_bridge_key(UkBridge *b, unsigned int unicode,
         }
         buf_append(&b->preedit, utf8, n);
     } else {
-        apply_engine_output(b);
+        apply_engine_output(b, edit);
     }
 
     if (b->direct_mode)
         return UK_BRIDGE_CONSUMED;
 
     /* Het am tiet (dau cach, dau cau...) thi chot preedit thanh van ban that. */
-    if (UnikeyAtWordBeginning())
+    if (UnikeyAtWordBeginning(b->session))
         uk_bridge_flush(b);
     else
         emit_preedit(b);
 
     return UK_BRIDGE_CONSUMED;
+}
+
+static const char *next_utf8(const char *text)
+{
+    while (((unsigned char)*++text & 0xC0) == 0x80)
+        ;
+    return text;
+}
+
+static unsigned int utf8_character(const char *start, const char *end)
+{
+    const unsigned char *bytes = (const unsigned char *)start;
+
+    switch (end - start) {
+    case 1:
+        return bytes[0] < 0x80 ? bytes[0] : 0;
+    case 2:
+        if (bytes[0] >= 0xC2 && bytes[0] <= 0xDF)
+            return ((bytes[0] & 0x1F) << 6) | (bytes[1] & 0x3F);
+        return 0;
+    case 3:
+        if (bytes[0] >= 0xE0 && bytes[0] <= 0xEF)
+            return ((bytes[0] & 0x0F) << 12) | ((bytes[1] & 0x3F) << 6) |
+                   (bytes[2] & 0x3F);
+        return 0;
+    default: return 0;
+    }
+}
+
+static int is_word_boundary(unsigned int ch)
+{
+    return ch < 0x80 && ch != '_' && (isspace(ch) || ispunct(ch));
+}
+
+int uk_bridge_can_revise_word(UkBridge *b, unsigned int key)
+{
+    return b->enabled && !b->direct_mode && b->preedit.len == 0 &&
+           key != 0 && key <= 0xFF && UnikeyIsRevisionKey(b->session, key);
+}
+
+int uk_bridge_revise_word(UkBridge *b, const char *text, size_t cursor,
+                          unsigned int key, UkWordEdit *edit)
+{
+    unsigned int word[UK_WORD_EDIT_MAX];
+    const char *caret, *start, *end;
+    int length = 0, before = 0, size;
+
+    if (!uk_bridge_can_revise_word(b, key) || !text ||
+        cursor == 0 || cursor > strlen(text) ||
+        ((unsigned char)text[cursor] & 0xC0) == 0x80)
+        return 0;
+
+    caret = start = text + cursor;
+    while (start > text) {
+        const char *prev = start - 1;
+        while (prev > text && ((unsigned char)*prev & 0xC0) == 0x80)
+            prev--;
+        unsigned int ch = utf8_character(prev, start);
+        if (!UnikeyIsWordLetter(ch)) {
+            if (!is_word_boundary(ch))
+                return 0;
+            break;
+        }
+        if (++before > UK_WORD_EDIT_MAX)
+            return 0;
+        start = prev;
+    }
+    if (!before)
+        return 0;
+
+    for (end = start; *end; ) {
+        const char *next = next_utf8(end);
+        unsigned int ch = utf8_character(end, next);
+        if (!UnikeyIsWordLetter(ch)) {
+            if (!is_word_boundary(ch))
+                return 0;
+            break;
+        }
+        if (length == UK_WORD_EDIT_MAX)
+            return 0;
+        word[length++] = ch;
+        end = next;
+    }
+
+    size = UnikeyReviseWord(b->session, word, length, key,
+                            edit->text, sizeof(edit->text));
+    if (!size || (size == end - start && memcmp(edit->text, start, size) == 0))
+        return 0;
+
+    const char *replacement_caret = edit->text;
+    for (int i = 0; i < before; i++)
+        replacement_caret = next_utf8(replacement_caret);
+
+    edit->before = before;
+    edit->after = length - before;
+    if (size - (replacement_caret - edit->text) == end - caret &&
+        memcmp(replacement_caret, caret, end - caret) == 0) {
+        edit->text[replacement_caret - edit->text] = '\0';
+        edit->after = 0;
+    }
+    return 1;
 }
 
 /*----------------------------------------------------------------*/
@@ -319,7 +406,7 @@ UkBridgeResult uk_bridge_backspace(UkBridge *b)
             return UK_BRIDGE_PASS;
 
         /* Bao cho engine biet co phim xoa, de bo dem noi bo lui theo... */
-        UnikeyBackspacePress();
+        UnikeyBackspacePress(b->session);
 
         /* ...nhung KHONG BAO GIO nuot phim BackSpace.
            Truoc day cho nay nuot phim roi goi erase_before_cursor de tu xoa.
@@ -332,13 +419,13 @@ UkBridgeResult uk_bridge_backspace(UkBridge *b)
 
     if (!b->enabled || b->preedit.len == 0) {
         /* Khong con gi trong preedit -- de app tu xoa van ban that. */
-        UnikeyResetBuf();
+        UnikeyResetBuf(b->session);
         return UK_BRIDGE_PASS;
     }
 
-    UnikeyBackspacePress();
-    if (UnikeyBackspaces > 0 || UnikeyBufChars > 0)
-        apply_engine_output(b);
+    const UnikeyEdit *edit = UnikeyBackspacePress(b->session);
+    if (edit->backspaces > 0 || edit->size > 0)
+        apply_engine_output(b, edit);
     else if (!b->direct_mode)
         buf_chop_utf8(&b->preedit, 1);
 
@@ -403,7 +490,7 @@ void uk_bridge_set_input_method(UkBridge *b, int im)
         return;
     uk_bridge_flush(b);
     b->inputMethod = im;
-    UnikeySetInputMethod((UkInputMethod)im);
+    UnikeySetInputMethod(b->session, (UkInputMethod)im);
     state_write(b);
 }
 
@@ -414,14 +501,12 @@ int uk_bridge_get_input_method(UkBridge *b)
 
 void uk_bridge_set_single_mode(UkBridge *b)
 {
-    (void)b;
-    UnikeySetSingleMode();
+    UnikeySetSingleMode(b->session);
 }
 
 void uk_bridge_restore_keystrokes(UkBridge *b)
 {
-    UnikeyRestoreKeyStrokes();
-    apply_engine_output(b);
+    apply_engine_output(b, UnikeyRestoreKeyStrokes(b->session));
     emit_preedit(b);
 }
 
@@ -594,7 +679,7 @@ static void state_read(UkBridge *b)
         uk_bridge_flush(b);
     if (method != b->inputMethod) {
         b->inputMethod = method;
-        UnikeySetInputMethod((UkInputMethod)method);
+        UnikeySetInputMethod(b->session, (UkInputMethod)method);
     }
     if (enabled != b->enabled)
         b->enabled = enabled;
@@ -677,7 +762,7 @@ int uk_bridge_state_dispatch(UkBridge *b)
   Dung chung ~/.unikey/options voi ukxim -- mot file cau hinh cho ca
   bo go, khong phat minh dinh dang moi.
  ----------------------------------------------------------------*/
-void uk_bridge_load_config(UkBridge *b)
+static void load_config(UkBridge *b)
 {
     UkXimOpt opt;
     char *fname;
@@ -694,24 +779,20 @@ void uk_bridge_load_config(UkBridge *b)
     }
 
     if (opt.usrKeyMapFile && *opt.usrKeyMapFile)
-        user_keymap_loaded = UnikeyLoadUserKeyMap(opt.usrKeyMapFile);
+        user_keymap_loaded = UnikeyLoadUserKeyMap(b->session, opt.usrKeyMapFile);
     if (opt.inputMethod == UkUsrIM && !user_keymap_loaded)
         opt.inputMethod = UkTelex;
     if (opt.macroFile && *opt.macroFile) {
-        if (UnikeyLoadMacroTable(opt.macroFile))
+        if (UnikeyLoadMacroTable(b->session, opt.macroFile))
             opt.uk.macroEnabled = 1;
     }
 
-    UnikeySetOptions(&opt.uk);
+    UnikeySetOptions(b->session, &opt.uk);
     b->terminal_mode = opt.terminalMode;
     b->user_keymap_loaded = user_keymap_loaded;
     b->enabled = opt.enabled;
     b->inputMethod = opt.inputMethod;
-    UnikeySetInputMethod((UkInputMethod)opt.inputMethod);
-
-    /* Charset luon la UTF-8 o front-end hien dai; tuy chon Charset trong
-       file chi con y nghia voi ukxim (X11). */
-    UnikeySetOutputCharset(CONV_CHARSET_XUTF8);
+    UnikeySetInputMethod(b->session, (UkInputMethod)opt.inputMethod);
 
     free(opt.macroFile);
     free(opt.usrKeyMapFile);

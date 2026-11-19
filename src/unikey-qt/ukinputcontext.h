@@ -35,6 +35,7 @@ private:
 
     void sendPreedit(const QString &text);
     void sendCommit(const QString &text);
+    bool reviseWord(unsigned int key);
 
     UkBridge         *m_bridge;
     QPointer<QObject> m_focus;

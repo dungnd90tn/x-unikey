@@ -20,184 +20,142 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 --------------------------------------------------------------------------------*/
-#include <ctype.h>
-#include <memory.h>
-#include <stdio.h>
-#include <iostream>
+#include <new>
 #include "unikey.h"
 #include "ukengine.h"
 #include "usrkeymap.h"
 
-using namespace std;
+struct UnikeySession {
+    UkSharedMem control;
+    UkEngine engine;
+    UnikeyEdit edit;
 
-//---- exported variables for use in UkEnginge class ----
-UkSharedMem *pShMem = 0;
+    UnikeySession()
+    {
+        control.input.init();
+        control.macStore.init();
+        control.vietKey = 1;
+        control.usrKeyMapLoaded = 0;
+        control.charsetId = CONV_CHARSET_XUTF8;
+        control.initialized = 1;
+        CreateDefaultUnikeyOptions(&control.options);
+        engine.setCtrlInfo(&control);
+    }
+};
 
-UkEngine MyKbEngine;
-
-int UnikeyCapsLockOn = 0;
-int UnikeyShiftPressed = 0;
-//----------------------------------------------------
-
-unsigned char UnikeyBuf[1024];
-int UnikeyBackspaces;
-int UnikeyBufChars;
-UkOutputType UnikeyOutput;
-
-//--------------------------------------------
-void UnikeySetInputMethod(UkInputMethod im)
+UnikeySession *UnikeyCreate()
 {
-  if (im == UkTelex || im == UkVni || im == UkViqr) {
-    pShMem->input.setIM(im);
-    MyKbEngine.reset();
-  }
-  else if (im == UkUsrIM && pShMem->usrKeyMapLoaded) {
-    //cout << "Switched to user mode\n"; //DEBUG
-    pShMem->input.setIM(pShMem->usrKeyMap);
-    MyKbEngine.reset();
-  }
-
-  //cout << "IM changed to: " << im << endl; //DEBUG
+    return new (std::nothrow) UnikeySession;
 }
 
-
-//--------------------------------------------
-void UnikeySetCapsState(int shiftPressed, int CapsLockOn)
+void UnikeyDestroy(UnikeySession *session)
 {
-  //UnikeyCapsAll = (shiftPressed && !CapsLockOn) || (!shiftPressed && CapsLockOn);
-  UnikeyCapsLockOn = CapsLockOn;
-  UnikeyShiftPressed = shiftPressed;
+    delete session;
 }
 
-//--------------------------------------------
-int UnikeySetOutputCharset(int charset)
+void CreateDefaultUnikeyOptions(UnikeyOptions *options)
 {
-    pShMem->charsetId = charset;
-    MyKbEngine.reset();
+    *options = {};
+    options->freeMarking = 1;
+    options->spellCheckEnabled = 1;
+}
+
+void UnikeySetOptions(UnikeySession *session, const UnikeyOptions *options)
+{
+    session->control.options = *options;
+}
+
+void UnikeySetInputMethod(UnikeySession *session, UkInputMethod method)
+{
+    if (method == UkTelex || method == UkVni || method == UkViqr) {
+        session->control.input.setIM(method);
+        session->engine.reset();
+    } else if (method == UkUsrIM && session->control.usrKeyMapLoaded) {
+        session->control.input.setIM(session->control.usrKeyMap);
+        session->engine.reset();
+    }
+}
+
+const UnikeyEdit *UnikeyFilter(UnikeySession *session, unsigned int ch,
+                               int shiftPressed, int capsLockOn)
+{
+    UnikeyEdit &edit = session->edit;
+    UkOutputType type;
+    edit.size = sizeof(edit.bytes);
+    session->engine.setKeyboardCase(shiftPressed, capsLockOn);
+    session->engine.process(ch, edit.backspaces, edit.bytes, edit.size, type);
+    return &edit;
+}
+
+void UnikeyPutChar(UnikeySession *session, unsigned int ch)
+{
+    session->engine.pass(ch);
+}
+
+void UnikeyResetBuf(UnikeySession *session)
+{
+    session->engine.reset();
+}
+
+void UnikeySetSingleMode(UnikeySession *session)
+{
+    session->engine.setSingleMode();
+}
+
+int UnikeyAtWordBeginning(UnikeySession *session)
+{
+    return session->engine.atWordBeginning();
+}
+
+const UnikeyEdit *UnikeyBackspacePress(UnikeySession *session)
+{
+    UnikeyEdit &edit = session->edit;
+    UkOutputType type;
+    edit.size = sizeof(edit.bytes);
+    session->engine.processBackspace(edit.backspaces, edit.bytes, edit.size, type);
+    return &edit;
+}
+
+int UnikeyLoadMacroTable(UnikeySession *session, const char *fileName)
+{
+    return session->control.macStore.loadFromFile(fileName);
+}
+
+int UnikeyLoadUserKeyMap(UnikeySession *session, const char *fileName)
+{
+    if (!UkLoadKeyMap(fileName, session->control.usrKeyMap))
+        return 0;
+    session->control.usrKeyMapLoaded = 1;
     return 1;
 }
 
-//--------------------------------------------
-void UnikeySetOptions(UnikeyOptions *pOpt)
+const UnikeyEdit *UnikeyRestoreKeyStrokes(UnikeySession *session)
 {
-  pShMem->options.freeMarking = pOpt->freeMarking;
-  pShMem->options.modernStyle = pOpt->modernStyle;
-  pShMem->options.macroEnabled = pOpt->macroEnabled;
-  pShMem->options.useUnicodeClipboard = pOpt->useUnicodeClipboard;
-  pShMem->options.alwaysMacro = pOpt->alwaysMacro;
-  pShMem->options.spellCheckEnabled = pOpt->spellCheckEnabled;
-  pShMem->options.autoNonVnRestore = pOpt->autoNonVnRestore;
+    UnikeyEdit &edit = session->edit;
+    UkOutputType type;
+    edit.size = sizeof(edit.bytes);
+    session->engine.restoreKeyStrokes(edit.backspaces, edit.bytes, edit.size, type);
+    return &edit;
 }
 
-//--------------------------------------------
-void UnikeyGetOptions(UnikeyOptions *pOpt)
+int UnikeyIsWordLetter(unsigned int unicode)
 {
-  *pOpt = pShMem->options;
+    return UnikeyUnicodeLetter(unicode) != vnl_nonVnChar;
 }
 
-//--------------------------------------------
-void CreateDefaultUnikeyOptions(UnikeyOptions *pOpt)
+int UnikeyIsRevisionKey(UnikeySession *session, unsigned int key)
 {
-  pOpt->freeMarking = 1;
-  pOpt->modernStyle = 0;
-  pOpt->macroEnabled = 0;
-  pOpt->useUnicodeClipboard = 0;
-  pOpt->alwaysMacro = 0;
-  pOpt->spellCheckEnabled = 1;
-  pOpt->autoNonVnRestore = 0;
+    return session->engine.isRevisionKey(key);
 }
 
-//--------------------------------------------
-void UnikeyCheckKbCase(int *pShiftPressed, int *pCapsLockOn)
+int UnikeyReviseWord(UnikeySession *session, const unsigned int *word, int length,
+                     unsigned int key, char *output, int capacity)
 {
-  *pShiftPressed = UnikeyShiftPressed;
-  *pCapsLockOn = UnikeyCapsLockOn;
-}
-
-//--------------------------------------------
-void UnikeySetup()
-{
-    SetupUnikeyEngine();
-    pShMem = new UkSharedMem;
-    pShMem->input.init();
-    pShMem->macStore.init();
-    pShMem->vietKey = 1;
-    pShMem->usrKeyMapLoaded = 0;
-    MyKbEngine.setCtrlInfo(pShMem);
-    MyKbEngine.setCheckKbCaseFunc(&UnikeyCheckKbCase);
-    UnikeySetInputMethod(UkTelex);
-    UnikeySetOutputCharset(CONV_CHARSET_XUTF8);
-    pShMem->initialized = 1;
-    CreateDefaultUnikeyOptions(&pShMem->options);
-}
-
-//--------------------------------------------
-void UnikeyCleanup()
-{
-  delete pShMem;
-}
-
-//--------------------------------------------
-void UnikeyFilter(unsigned int ch)
-{
-  UnikeyBufChars = sizeof(UnikeyBuf);
-  MyKbEngine.process(ch, UnikeyBackspaces, UnikeyBuf, UnikeyBufChars, UnikeyOutput);
-}
-
-//--------------------------------------------
-void UnikeyPutChar(unsigned int ch)
-{
-  MyKbEngine.pass(ch);
-  UnikeyBufChars = 0;
-  UnikeyBackspaces = 0;
-}
-
-//--------------------------------------------
-void UnikeyResetBuf()
-{
-  MyKbEngine.reset();
-}
-
-//--------------------------------------------
-void UnikeySetSingleMode()
-{
-  MyKbEngine.setSingleMode();
-}
-
-//--------------------------------------------
-int UnikeyAtWordBeginning()
-{
-  return MyKbEngine.atWordBeginning() ? 1 : 0;
-}
-
-//--------------------------------------------
-void UnikeyBackspacePress()
-{
-  UnikeyBufChars = sizeof(UnikeyBuf);
-  MyKbEngine.processBackspace(UnikeyBackspaces, UnikeyBuf, UnikeyBufChars, UnikeyOutput);
-  //  printf("Backspaces: %d\n",UnikeyBackspaces);
-}
-
-//--------------------------------------------
-int UnikeyLoadMacroTable(const char *fileName)
-{
-  return pShMem->macStore.loadFromFile(fileName);
-}
-
-//--------------------------------------------
-int UnikeyLoadUserKeyMap(const char *fileName)
-{
-  if (UkLoadKeyMap(fileName, pShMem->usrKeyMap)) {
-    //cout << "User key map loaded!\n"; //DEBUG
-    pShMem->usrKeyMapLoaded = 1;
-    return 1;
-  }
-  return 0;
-}
-
-//--------------------------------------------
-void UnikeyRestoreKeyStrokes()
-{
-    UnikeyBufChars = sizeof(UnikeyBuf);
-    MyKbEngine.restoreKeyStrokes(UnikeyBackspaces, UnikeyBuf, UnikeyBufChars, UnikeyOutput);
+    UkEngine editor;
+    editor.setCtrlInfo(&session->control);
+    int size = capacity - 1;
+    if (!editor.reviseWord(word, length, key, reinterpret_cast<unsigned char *>(output), size))
+        return 0;
+    output[size] = '\0';
+    return size;
 }
