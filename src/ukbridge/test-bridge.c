@@ -340,6 +340,16 @@ static void check_ibus_policy(void)
         Failures++;
     }
 
+    int64_t zsh_event_time = 1000000;
+    int recent_focus = uk_ibus_policy_take_zsh_focus(&zsh_event_time, 1100000);
+    int repeated_focus = uk_ibus_policy_take_zsh_focus(&zsh_event_time, 1110000);
+    zsh_event_time = 1000000;
+    int stale_focus = uk_ibus_policy_take_zsh_focus(&zsh_event_time, 1200000);
+    if (!recent_focus || repeated_focus || stale_focus || zsh_event_time != 0) {
+        printf("  FAIL policy zsh: recent focus report must be consumed once\n");
+        Failures++;
+    }
+
     /* Moi terminal luon OFF, ke ca file options cu con TerminalMode=Preedit. */
     check_ibus_policy_case("terminal ignores legacy preedit",
                            0, 1, 0, 1, 1, 1, UK_IBUS_MODE_OFF);

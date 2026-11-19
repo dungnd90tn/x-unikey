@@ -282,9 +282,10 @@ Neu bo qua buoc nay, terminal tich hop VS Code se tiep tuc dung PREEDIT.
 
 Integration bat focus-reporting chi khi ZLE dang doc command line, va tat no
 truoc khi chay command de escape focus khong lot vao stdin cua chuong trinh con.
-Helper `unikey-profile` ghi event nguyen tu vao `~/.unikey/profile-event`;
-engine chi latch event cho context dang focus va xoa latch khi focus-out, nen
-file cu khong the lam terminal/chat tiep theo nhan nham profile.
+VS Code bao lai focus hien tai khi ZLE bat focus-reporting. Helper
+`unikey-profile` ghi event nguyen tu vao `~/.unikey/profile-event`; engine
+co the ap dung tin hieu focus-in den som cho context IBus tiep theo mot lan
+trong 150 ms. Khi roi terminal, tin hieu focus-out xoa profile nay.
 
 Go roi: touch ~/.unikey/debug && ibus restart
         cat ~/.unikey/debug.log        (in instance, focus, purpose, caps, mode)

@@ -22,7 +22,11 @@ function _x_unikey_profile_focus_out() {
 # chay command de CSI focus khong lot vao stdin cua chuong trinh con.
 function _x_unikey_profile_line_init() {
   printf '\e[?1004h'
-  _x_unikey_profile_emit probe
+  # VS Code's xterm.js immediately reports its current focus on DECSET
+  # 1004. Other terminals may wait until the next focus change.
+  if [[ ${TERM_PROGRAM-} != vscode ]]; then
+    _x_unikey_profile_emit probe
+  fi
 }
 
 function _x_unikey_profile_line_finish() {
@@ -35,7 +39,7 @@ zle -N _x_unikey_profile_focus_out
 add-zle-hook-widget line-init _x_unikey_profile_line_init
 add-zle-hook-widget line-finish _x_unikey_profile_line_finish
 
-for _x_unikey_keymap in emacs viins vicmd; do
+for _x_unikey_keymap in main emacs viins vicmd; do
   bindkey -M "$_x_unikey_keymap" $'\e[I' _x_unikey_profile_focus_in \
     2>/dev/null || true
   bindkey -M "$_x_unikey_keymap" $'\e[O' _x_unikey_profile_focus_out \

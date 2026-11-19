@@ -111,6 +111,7 @@ struct _UkIBusEngine {
     gboolean   saw_address_purpose;
     UkBrowserAddressState browser_address;
     gboolean   zsh_terminal_active;
+    int64_t    zsh_focus_event_time;
     gint64     focus_in_time;
     gboolean   focused;
     gboolean   mode_applied;
@@ -718,9 +719,8 @@ static gboolean uk_profile_event_matches(UkIBusEngine *self, GFile *file)
     return matches;
 }
 
-/* profile-event la event, khong phai state ben vung. Engine chi ap event ON
-   cho context dang focus va luon xoa latch khi focus-out. Nhu vay mot terminal
-   bi kill khong the de lai zsh profile cho chat/form cua lan focus sau. */
+/* The next IBus focus can arrive just after xterm's focus-in report.
+   Keep that report briefly. A focus-out report clears it immediately. */
 static void uk_ibus_engine_profile_changed(GFileMonitor *monitor,
                                            GFile *file,
                                            GFile *other_file,
@@ -755,10 +755,15 @@ static void uk_ibus_engine_profile_changed(GFileMonitor *monitor,
     /* line-init co the xay ra o mot terminal dang chay nen khi command ket
        thuc, du nguoi dung dang focus chat/form. PROBE chi khoi tao profile
        ngay sau mot focus-in moi va khong bao gio de len fingerprint web. */
-    if (active == 2) {
+    if (active == 1)
+        self->zsh_focus_event_time = g_get_monotonic_time();
+    else if (active == 0)
+        self->zsh_focus_event_time = 0;
+    else {
         gint64 age = g_get_monotonic_time() - self->focus_in_time;
 
         if (!self->focused ||
+            uk_ibus_engine_is_browser_address(self) ||
             self->browser_address != UK_BROWSER_ADDRESS_NONE ||
             age < 0 || age > 500 * G_TIME_SPAN_MILLISECOND) {
             uk_log("engine=%p profile-event zsh=probe ignored age-us=%lld",
@@ -768,7 +773,7 @@ static void uk_ibus_engine_profile_changed(GFileMonitor *monitor,
         active = 1;
     }
     if (!self->focused) {
-        uk_log("engine=%p profile-event zsh=%s ignored-no-focus",
+        uk_log("engine=%p profile-event zsh=%s waiting-for-focus",
                (void *)self, active ? "on" : "off");
         return;
     }
@@ -810,9 +815,10 @@ static void uk_ibus_engine_focus_in(IBusEngine *engine)
     self->saw_terminal_purpose = FALSE;
     self->saw_address_purpose = FALSE;
     self->browser_address = UK_BROWSER_ADDRESS_NONE;
-    self->zsh_terminal_active = FALSE;
     self->focused = TRUE;
     self->focus_in_time = g_get_monotonic_time();
+    self->zsh_terminal_active = uk_ibus_policy_take_zsh_focus(
+        &self->zsh_focus_event_time, self->focus_in_time);
     self->mode_applied = FALSE;
     uk_bridge_reset(self->bridge);
     uk_ibus_engine_update_mode(self, "focus-in");
